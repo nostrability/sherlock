@@ -94,14 +94,14 @@ function buildFindings(): Findings {
     totalNoSchema += r.no_schema;
   }
 
-  // Build by_kind
-  const findingsByKind: Record<string, KindFindings> = {};
+  // Build by_kind (use Object.create(null) to prevent prototype pollution from client-controlled keys)
+  const findingsByKind: Record<string, KindFindings> = Object.create(null);
   for (const r of byKind) {
     const validated = r.valid + r.invalid;
     const errorRate = validated > 0 ? r.invalid / validated : 0;
 
     // Per-app breakdown for this kind
-    const appBreakdown: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string }> = {};
+    const appBreakdown: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string }> = Object.create(null);
     for (const m of matrix) {
       if (m.kind === r.kind) {
         const mValidated = m.valid + m.invalid;
@@ -142,7 +142,7 @@ function buildFindings(): Findings {
   }
 
   // Build by_app
-  const findingsByApp: Record<string, AppFindings> = {};
+  const findingsByApp: Record<string, AppFindings> = Object.create(null);
   for (const m of matrix) {
     if (!findingsByApp[m.client_name]) {
       findingsByApp[m.client_name] = {
@@ -234,7 +234,9 @@ function buildFindings(): Findings {
 // --- HTML dashboard ---
 
 function generateHtml(findings: Findings): string {
-  const data = JSON.stringify(findings);
+  // Escape </script> sequences to prevent XSS breakout from inline <script> tag.
+  // Also escape <!-- to prevent HTML comment injection.
+  const data = JSON.stringify(findings).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

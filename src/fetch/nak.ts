@@ -28,6 +28,8 @@ export interface NakFetchOptions {
   kinds: number[];
   relays: string[];
   since: number;
+  /** Per-kind watermarks — if provided, each batch uses the minimum since across its kinds. */
+  perKindSince?: Map<number, number>;
   onEvent: (event: NostrEvent, relay: string) => void;
   onError?: (error: string) => void;
   onRateLimit?: (event: RateLimitEvent) => void;
@@ -189,12 +191,18 @@ export async function fetchEvents(opts: NakFetchOptions): Promise<number> {
 
       opts.onBatchStart?.(relay, batch, bi, kindBatches.length);
 
+      // Use per-kind watermarks if available: take the minimum since across this batch's kinds
+      let batchSince = opts.since;
+      if (opts.perKindSince) {
+        batchSince = Math.min(...batch.map(k => opts.perKindSince!.get(k) ?? opts.since));
+      }
+
       try {
         const count = await fetchBatchFromRelay(
           nakPath,
           relay,
           batch,
-          opts.since,
+          batchSince,
           opts.onEvent,
           opts.onError,
           opts.onRateLimit,

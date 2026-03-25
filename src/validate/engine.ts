@@ -12,9 +12,9 @@ function loadSchemas(): Record<string, unknown> {
   // Walk the dist/nips directory to find kind schemas directly
   // (the ESM bundle re-exports don't work with require())
   const schemataDir = require.resolve('@nostrability/schemata/package.json');
-  const pkgDir = schemataDir.replace('/package.json', '');
-  const fs = require('fs');
   const path = require('path');
+  const pkgDir = path.dirname(schemataDir);
+  const fs = require('fs');
 
   schemas = {};
   const nipsDir = path.join(pkgDir, 'dist', 'nips');
@@ -117,15 +117,19 @@ function stripErrorMessages(obj: unknown): void {
 
 /**
  * Check that schemata package is importable and has schemas for our target kinds.
+ * Also verifies schemas can be compiled by AJV (triggers lazy compilation + caching).
  * Returns list of available kind schema keys.
  */
 export function checkSchemaAvailability(kinds: number[]): { available: string[]; missing: string[] } {
-  const allSchemas = loadSchemas();
   const available: string[] = [];
   const missing: string[] = [];
   for (const kind of kinds) {
     const key = `kind${kind}Schema`;
-    if (allSchemas[key]) {
+    // Trigger validateEvent to force schema compilation and caching.
+    // A dummy event is used — we only care whether a validator was produced.
+    const dummyEvent: NostrEvent = { id: '', pubkey: '', kind, created_at: 0, tags: [], content: '', sig: '' };
+    const result = validateEvent(dummyEvent);
+    if (result.schemaKey) {
       available.push(key);
     } else {
       missing.push(key);

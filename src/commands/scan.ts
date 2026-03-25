@@ -44,14 +44,27 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     ? opts.relays.split(',').map(r => r.trim())
     : DEFAULT_RELAYS;
 
-  // Determine since timestamp
+  // Determine since timestamp.
+  // When no --since is given, use per-kind high-water marks so that each kind
+  // resumes from its own last-seen timestamp. This prevents a kind with recent
+  // activity from advancing the watermark past kinds that haven't been scanned.
   let since: number;
+  let perKindSince: Map<number, number> | null = null;
   if (opts.since) {
     const duration = parseDuration(opts.since);
     since = Math.floor(Date.now() / 1000) - duration;
   } else {
-    const hwm = getHighWaterMark();
-    since = hwm ?? Math.floor(Date.now() / 1000) - DEFAULT_SCAN_WINDOW_SECONDS;
+    const fallback = Math.floor(Date.now() / 1000) - DEFAULT_SCAN_WINDOW_SECONDS;
+    const kindTimestamps = new Map<number, number>();
+    let minSince = Infinity;
+    for (const kind of kinds) {
+      const hwm = getHighWaterMark(kind);
+      const ts = hwm ?? fallback;
+      kindTimestamps.set(kind, ts);
+      if (ts < minSince) minSince = ts;
+    }
+    since = minSince === Infinity ? fallback : minSince;
+    perKindSince = kindTimestamps;
   }
 
   // Apply time jitter: randomly look further back by up to 6 hours
@@ -95,6 +108,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     kinds,
     relays,
     since,
+    perKindSince: perKindSince ?? undefined,
     onRelayStart: (relay, index, total) => {
       console.log(`  [relay ${index + 1}/${total}] ${relay}`);
     },
