@@ -232,6 +232,7 @@ export function getViolationDetails(): Array<{
           AND v2.error_keyword IS base.error_keyword
           AND v2.error_path IS base.error_path
           AND v2.error_message = base.error_message
+        ORDER BY e2.created_at DESC, e2.id
         LIMIT 3
       )
     ) as sample_event_ids

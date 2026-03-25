@@ -62,10 +62,11 @@ export interface ExportCommandOptions {
 
 // --- Helpers ---
 
-function computeStatus(total: number, invalid: number): string {
-  if (total < STATUS_THRESHOLDS.MIN_EVENTS) return 'u';
+function computeStatus(valid: number, invalid: number): string {
+  const validated = valid + invalid;
+  if (validated < STATUS_THRESHOLDS.MIN_EVENTS) return 'u';
   if (invalid === 0) return 'y';
-  if (invalid / total <= STATUS_THRESHOLDS.ALMOST_MAX) return 'a';
+  if (invalid / validated <= STATUS_THRESHOLDS.ALMOST_MAX) return 'a';
   return 'n';
 }
 
@@ -109,7 +110,7 @@ function buildFindings(): Findings {
         appBreakdown[m.client_name] = {
           total: m.total, valid: m.valid, invalid: m.invalid,
           error_rate: Math.round(mRate * 10000) / 10000,
-          status: computeStatus(m.total, m.invalid),
+          status: computeStatus(m.valid, m.invalid),
         };
       }
     }
@@ -418,7 +419,18 @@ document.addEventListener('click', function(e) {
 </html>`;
 }
 
-// --- Nostr publishing ---
+// --- Nostr publishing helpers ---
+
+/** Strip newlines and control chars from relay-derived text for plain-text notes. */
+function sanitizeText(s: string): string {
+  return s.replace(/[\r\n\t]+/g, ' ').trim();
+}
+
+/** Escape pipe and strip newlines for markdown table cells. */
+function mdCell(s: string): string {
+  return s.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '\\|').trim();
+}
+
 
 function buildKind1Summary(findings: Findings): string {
   const c = findings.scan_coverage;
@@ -453,7 +465,7 @@ function buildKind1Summary(findings: Findings): string {
   if (namedApps.length > 0) {
     text += `Apps with violations:\n`;
     for (const [name, data] of namedApps) {
-      text += `• ${name}: ${data.total_invalid} invalid of ${data.total_events}\n`;
+      text += `• ${sanitizeText(name)}: ${data.total_invalid} invalid of ${data.total_events}\n`;
     }
     text += '\n';
   }
@@ -498,7 +510,7 @@ function buildKind30023Content(findings: Findings): string {
     md += `|-----|--------|-------|---------|------------|\n`;
     for (const [name, data] of namedApps) {
       const ratePct = (data.error_rate * 100).toFixed(1);
-      md += `| ${name} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
+      md += `| ${mdCell(name)} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
     }
     md += '\n';
   }
