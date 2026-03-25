@@ -288,7 +288,7 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 </head>
 <body>
 <h1>Sherlock — Nostr Schema Validation Report</h1>
-<p class="subtitle">Generated ${findings.generated_at.replace('T', ' ').replace(/\\.\\d+Z$/, ' UTC')} · <a href="${GITHUB_REPO}/tree/main/sherlock">Source</a></p>
+<p class="subtitle">Generated ${findings.generated_at.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} · <a href="${GITHUB_REPO}">Source</a></p>
 
 <div class="coverage" id="coverage"></div>
 
@@ -444,7 +444,7 @@ function buildKind1Summary(findings: Findings): string {
     text += '\n';
   }
 
-  text += `Full report: ${GITHUB_REPO}/tree/main/sherlock/docs`;
+  text += `Full report: ${GITHUB_REPO}/tree/main/docs`;
   return text;
 }
 
@@ -502,7 +502,7 @@ function buildKind30023Content(findings: Findings): string {
   }
 
   md += `---\n\n`;
-  md += `[Source & methodology](${GITHUB_REPO}/tree/main/sherlock) · Sherlock validates Nostr events against [schemata](https://github.com/nostrability/schemata) JSON Schemas\n`;
+  md += `[Source & methodology](${GITHUB_REPO}) · Sherlock validates Nostr events against [schemata](https://github.com/nostrability/schemata) JSON Schemas\n`;
   return md;
 }
 
@@ -528,20 +528,22 @@ async function publishToNostr(findings: Findings): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const dateTag = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
+  // Pass secret key via env (nak reads $NOSTR_SECRET_KEY automatically)
+  const nakEnv = { ...process.env, NOSTR_SECRET_KEY: secretKey };
+
   // Kind 1: short summary
   const kind1Content = buildKind1Summary(findings);
   console.log('  Publishing kind:1 summary...');
   try {
     const kind1Args = [
       'event',
-      '--sec', secretKey,
       '-k', '1',
       '-c', kind1Content,
       '-t', 't=sherlock',
       '-t', 't=nostrability',
       ...publishRelays,
     ];
-    const result1 = execFileSync(nakPath, kind1Args, { encoding: 'utf-8', timeout: 30000 });
+    const result1 = execFileSync(nakPath, kind1Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:1 published:', result1.trim().slice(0, 80));
   } catch (err) {
     console.error('  kind:1 publish failed:', (err as Error).message);
@@ -554,7 +556,6 @@ async function publishToNostr(findings: Findings): Promise<void> {
   try {
     const kind30023Args = [
       'event',
-      '--sec', secretKey,
       '-k', '30023',
       '-c', kind30023Content,
       '-d', dTag,
@@ -565,7 +566,7 @@ async function publishToNostr(findings: Findings): Promise<void> {
       '-t', 't=nostrability',
       ...publishRelays,
     ];
-    const result2 = execFileSync(nakPath, kind30023Args, { encoding: 'utf-8', timeout: 30000 });
+    const result2 = execFileSync(nakPath, kind30023Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:30023 published:', result2.trim().slice(0, 80));
   } catch (err) {
     console.error('  kind:30023 publish failed:', (err as Error).message);

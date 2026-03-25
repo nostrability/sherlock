@@ -41,6 +41,9 @@ program
   .action((opts) => {
     try {
       reportCommand(opts);
+    } catch (err) {
+      console.error('Report failed:', err);
+      process.exit(1);
     } finally {
       closeDb();
     }
@@ -52,6 +55,9 @@ program
   .action(() => {
     try {
       statsCommand();
+    } catch (err) {
+      console.error('Stats failed:', err);
+      process.exit(1);
     } finally {
       closeDb();
     }

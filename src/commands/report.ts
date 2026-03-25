@@ -17,7 +17,8 @@ export function reportCommand(opts: ReportCommandOptions): void {
 
   const groupBy = opts.by || 'kind';
   const format = opts.format || 'table';
-  const limit = opts.limit ? parseInt(opts.limit, 10) : undefined;
+  const parsed = opts.limit ? parseInt(opts.limit, 10) : NaN;
+  const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 
   switch (groupBy) {
     case 'kind':
@@ -144,6 +145,14 @@ function reportRecent(format: string, limit?: number): void {
 
   if (format === 'json') {
     console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+
+  if (format === 'csv') {
+    console.log('event_id,kind,client_name,error_message');
+    for (const row of rows) {
+      console.log(`${row.event_id},${row.kind},${row.client_name ?? '-'},${JSON.stringify(row.error_message)}`);
+    }
     return;
   }
 

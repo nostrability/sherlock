@@ -120,7 +120,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/findings.json docs/index.html
           git diff --cached --quiet || git commit -m "update findings $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "Push failed (attempt $i/3), rebasing and retrying..."
+            sleep $((i * 2))
+            git pull --rebase origin main
+          done
+          echo "::error::Failed to push after 3 attempts"
+          exit 1
 
       # Save DB for next run
       - name: Save database cache

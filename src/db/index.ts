@@ -47,6 +47,8 @@ export function getDb(): Database.Database {
 
 export function closeDb(): void {
   if (db) {
+    _insertEvent = null;
+    _insertViolation = null;
     db.close();
     db = null;
   }
@@ -83,39 +85,44 @@ export function storeEvent(
   event: NostrEvent,
   validation: ValidationResult,
   client: ClientAttribution | null,
+  sourceRelay?: string,
 ): boolean {
   const raw = JSON.stringify(event);
   const validValue = validation.valid === null ? null : validation.valid ? 1 : 0;
 
-  const result = getInsertEvent().run({
-    id: event.id,
-    pubkey: event.pubkey,
-    kind: event.kind,
-    created_at: event.created_at,
-    tags: JSON.stringify(event.tags),
-    raw,
-    client_name: client?.name ?? null,
-    source_relay: null,
-    valid: validValue,
+  const txn = getDb().transaction(() => {
+    const result = getInsertEvent().run({
+      id: event.id,
+      pubkey: event.pubkey,
+      kind: event.kind,
+      created_at: event.created_at,
+      tags: JSON.stringify(event.tags),
+      raw,
+      client_name: client?.name ?? null,
+      source_relay: sourceRelay ?? null,
+      valid: validValue,
+    });
+
+    if (result.changes === 0) return false; // duplicate
+
+    if (validation.errors.length > 0 && validation.schemaKey) {
+      const stmt = getInsertViolation();
+      for (const err of validation.errors) {
+        stmt.run({
+          event_id: event.id,
+          schema_key: validation.schemaKey,
+          error_path: err.instancePath || null,
+          error_message: err.message || 'unknown error',
+          error_keyword: err.keyword || null,
+          severity: 'error',
+        });
+      }
+    }
+
+    return true;
   });
 
-  if (result.changes === 0) return false; // duplicate
-
-  if (validation.errors.length > 0 && validation.schemaKey) {
-    const stmt = getInsertViolation();
-    for (const err of validation.errors) {
-      stmt.run({
-        event_id: event.id,
-        schema_key: validation.schemaKey,
-        error_path: err.instancePath || null,
-        error_message: err.message || 'unknown error',
-        error_keyword: err.keyword || null,
-        severity: 'error',
-      });
-    }
-  }
-
-  return true;
+  return txn();
 }
 
 /**

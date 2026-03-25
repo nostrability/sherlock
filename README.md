@@ -50,7 +50,7 @@ Requires [nak](https://github.com/fiatjaf/nak) on PATH for scanning and publishi
 
 ## CI
 
-The GitHub Actions workflow (`sherlock-scan.yml`) runs 3x/day at staggered UTC times. It:
+The GitHub Actions workflow (`scan.yml`) runs 3x/day at staggered UTC times. It:
 
 1. Restores the SQLite DB from cache (incremental scanning)
 2. Scans relays with randomized order and jitter

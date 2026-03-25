@@ -28,7 +28,7 @@ export interface NakFetchOptions {
   kinds: number[];
   relays: string[];
   since: number;
-  onEvent: (event: NostrEvent) => void;
+  onEvent: (event: NostrEvent, relay: string) => void;
   onError?: (error: string) => void;
   onRateLimit?: (event: RateLimitEvent) => void;
   onRelayStart?: (relay: string, index: number, total: number) => void;
@@ -83,7 +83,7 @@ async function fetchBatchFromRelay(
   relay: string,
   kinds: number[],
   since: number,
-  onEvent: (event: NostrEvent) => void,
+  onEvent: (event: NostrEvent, relay: string) => void,
   onError?: (error: string) => void,
   onRateLimit?: (event: RateLimitEvent) => void,
 ): Promise<number> {
@@ -115,7 +115,7 @@ async function fetchBatchFromRelay(
         const event = JSON.parse(trimmed) as NostrEvent;
         if (event.id && event.kind !== undefined && event.pubkey) {
           count++;
-          onEvent(event);
+          onEvent(event, relay);
         }
       } catch {
         onError?.(`Failed to parse nak output: ${trimmed.slice(0, 100)}`);
@@ -130,8 +130,8 @@ async function fetchBatchFromRelay(
     proc.on('close', (code) => {
       // Check for rate limiting in stderr regardless of exit code
       const rateLimits = detectRateLimits(stderr, relay);
-      for (const rl of rateLimits) {
-        onRateLimit?.(rl);
+      for (const rateLimit of rateLimits) {
+        onRateLimit?.(rateLimit);
       }
 
       if (code === 0) {

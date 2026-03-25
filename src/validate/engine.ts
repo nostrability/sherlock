@@ -9,10 +9,8 @@ let schemas: Record<string, unknown> | null = null;
 
 function loadSchemas(): Record<string, unknown> {
   if (schemas) return schemas;
-  // The bundle's schemas.js re-exports from .json files; require() handles JSON natively
-  const bundlePath = require.resolve('@nostrability/schemata');
-  // bundlePath points to dist/bundle/schemas.js — but that's ESM with re-exports.
-  // Instead, walk the dist/nips directory to find kind schemas directly.
+  // Walk the dist/nips directory to find kind schemas directly
+  // (the ESM bundle re-exports don't work with require())
   const schemataDir = require.resolve('@nostrability/schemata/package.json');
   const pkgDir = schemataDir.replace('/package.json', '');
   const fs = require('fs');
@@ -29,6 +27,7 @@ function loadSchemas(): Record<string, unknown> {
   const nipDirs = fs.readdirSync(nipsDir);
   for (const nipDir of nipDirs) {
     const nipPath = path.join(nipsDir, nipDir);
+    try { if (!fs.statSync(nipPath).isDirectory()) continue; } catch { continue; }
     const entries = fs.readdirSync(nipPath);
     for (const entry of entries) {
       const match = entry.match(/^kind-(\d+)$/);

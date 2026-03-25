@@ -4,7 +4,7 @@ import { validateEvent, checkSchemaAvailability } from '../validate/engine.js';
 import { extractClientTag } from '../attribution/client-tag.js';
 import { storeEvent, getHighWaterMark, getDb } from '../db/index.js';
 import { parseDuration, formatNumber } from '../util.js';
-import type { ScanProgress, RateLimitEvent } from '../types.js';
+import type { RateLimitEvent } from '../types.js';
 
 interface ScanCommandOptions {
   kinds?: string;
@@ -77,10 +77,10 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log(`  Since: ${sinceDate} (jitter: -${Math.floor(jitterApplied / 60)}m)`);
   console.log('');
 
-  const progress: ScanProgress = {
+  const progress = {
     fetched: 0,
     duplicates: 0,
-    validated: 0,
+    newEvents: 0,
     violations: 0,
     rateLimits: 0,
   };
@@ -109,17 +109,17 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
       rateLimitEvents.push(event);
       console.error(`    !! RATE LIMITED by ${event.relay}: ${event.reason}`);
     },
-    onEvent: (event) => {
+    onEvent: (event, relay) => {
       progress.fetched++;
 
       const validation = validateEvent(event);
       const client = extractClientTag(event.tags);
-      const isNew = storeEvent(event, validation, client);
+      const isNew = storeEvent(event, validation, client, relay);
 
       if (!isNew) {
         progress.duplicates++;
       } else {
-        progress.validated++;
+        progress.newEvents++;
         if (validation.valid === false) {
           progress.violations += validation.errors.length;
         }
@@ -140,7 +140,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log('');
   console.log('Results:');
   console.log(`  Total fetched:  ${formatNumber(progress.fetched)}`);
-  console.log(`  New events:     ${formatNumber(progress.validated)}`);
+  console.log(`  New events:     ${formatNumber(progress.newEvents)}`);
   console.log(`  Duplicates:     ${formatNumber(progress.duplicates)}`);
   console.log(`  Violations:     ${formatNumber(progress.violations)}`);
 
