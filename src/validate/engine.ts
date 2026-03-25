@@ -36,7 +36,11 @@ function loadSchemas(): Record<string, unknown> {
         const schemaPath = path.join(nipPath, entry, 'schema.json');
         if (fs.existsSync(schemaPath)) {
           const key = `kind${kindNum}Schema`;
-          schemas[key] = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+          try {
+            schemas[key] = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+          } catch (err) {
+            console.error(`Warning: Failed to parse ${schemaPath}:`, err);
+          }
         }
       }
     }

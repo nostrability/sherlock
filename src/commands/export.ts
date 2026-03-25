@@ -220,7 +220,8 @@ function buildFindings(): Findings {
     generated_at: new Date().toISOString(),
     scan_coverage: {
       total_events: total, total_valid: totalValid, total_invalid: totalInvalid, total_no_schema: totalNoSchema,
-      kinds_scanned: byKind.map(r => r.kind).sort((a, b) => a - b),
+      // Include all configured kinds (not just those with events) so zero-hit kinds are visible
+      kinds_scanned: [...new Set([...DEFAULT_KINDS, ...byKind.map(r => r.kind)])].sort((a, b) => a - b),
       relays,
       first_event_at: ts(timeRange.first_at),
       last_event_at: ts(timeRange.last_at),
@@ -265,12 +266,11 @@ table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
 td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
 tr:hover { background: var(--hover); }
-tr.expandable { cursor: pointer; }
-tr.expandable td:first-child::before { content: "▸ "; color: var(--muted); }
-tr.expandable.open td:first-child::before { content: "▾ "; }
 tr.detail { display: none; }
 tr.detail.open { display: table-row; }
 tr.detail td { padding-left: 32px; background: var(--hover); }
+.expand-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 0.85rem; padding: 0 4px 0 0; vertical-align: middle; }
+.expand-btn:hover { color: var(--fg); }
 .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .status-y { background: var(--green); }
 .status-a { background: var(--yellow); }
@@ -349,12 +349,13 @@ document.querySelectorAll('.tab').forEach(tab => {
     const d = bk[k];
     const topErr = d.top_errors[0];
     const rc = rateClass(d.error_rate);
-    html += '<tr class="expandable" data-kind="' + k + '"><td>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
+    const detailId = 'kind-detail-' + k;
+    html += '<tr data-kind="kind-' + k + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
     // Detail rows: per-app breakdown
     const apps = Object.keys(d.by_app).sort((a,b) => d.by_app[b].total - d.by_app[a].total);
     for (const app of apps) {
       const a = d.by_app[app];
-      html += '<tr class="detail" data-parent="' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
+      html += '<tr class="detail" id="' + detailId + '" data-parent="kind-' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
     }
   }
   html += '</tbody></table>';
@@ -367,15 +368,18 @@ document.querySelectorAll('.tab').forEach(tab => {
   const apps = Object.keys(ba).sort((a,b) => ba[b].total_events - ba[a].total_events);
   if (!apps.length) { document.getElementById('panel-app').innerHTML = '<div class="empty">No data</div>'; return; }
   let html = '<table><thead><tr><th>App</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Kinds</th></tr></thead><tbody>';
+  let appIdx = 0;
   for (const app of apps) {
     const d = ba[app];
     const rc = rateClass(d.error_rate);
-    html += '<tr class="expandable" data-app="' + esc(app) + '"><td>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
+    const detailId = 'app-detail-' + appIdx;
+    const parentKey = 'app-' + appIdx;
+    html += '<tr data-app="' + parentKey + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
     // Detail rows: violations
     for (const v of d.violations.slice(0, 10)) {
-      const name = KIND_NAMES[v.kind] || 'kind:' + v.kind;
-      html += '<tr class="detail" data-parent="' + esc(app) + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" title="Click to copy ' + id + '" onclick="navigator.clipboard.writeText(\\'' + id + '\\')">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
+      html += '<tr class="detail" id="' + detailId + '" data-parent="' + parentKey + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" title="Click to copy ' + id + '" onclick="navigator.clipboard.writeText(\\'' + id + '\\')">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
     }
+    appIdx++;
   }
   html += '</tbody></table>';
   document.getElementById('panel-app').innerHTML = html;
@@ -395,11 +399,19 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 // Expand/collapse rows
 document.addEventListener('click', function(e) {
-  const row = e.target.closest('tr.expandable');
+  const btn = e.target.closest('.expand-btn');
+  if (!btn) return;
+  const row = btn.closest('tr');
   if (!row) return;
   const key = row.dataset.kind || row.dataset.app;
-  row.classList.toggle('open');
-  row.closest('tbody').querySelectorAll('tr.detail[data-parent="' + key + '"]').forEach(r => r.classList.toggle('open'));
+  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', String(!expanded));
+  btn.innerHTML = expanded ? '&#9656;' : '&#9662;';
+  var tbody = row.closest('tbody');
+  var details = tbody.querySelectorAll('tr.detail');
+  for (var i = 0; i < details.length; i++) {
+    if (details[i].dataset.parent === key) details[i].classList.toggle('open');
+  }
 });
 </script>
 </body>

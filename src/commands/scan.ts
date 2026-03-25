@@ -94,7 +94,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     fetched: 0,
     duplicates: 0,
     newEvents: 0,
-    violations: 0,
+    invalidEvents: 0,
+    violationErrors: 0,
     rateLimits: 0,
   };
   const rateLimitEvents: RateLimitEvent[] = [];
@@ -135,7 +136,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
       } else {
         progress.newEvents++;
         if (validation.valid === false) {
-          progress.violations += validation.errors.length;
+          progress.invalidEvents++;
+          progress.violationErrors += validation.errors.length;
         }
       }
 
@@ -156,7 +158,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log(`  Total fetched:  ${formatNumber(progress.fetched)}`);
   console.log(`  New events:     ${formatNumber(progress.newEvents)}`);
   console.log(`  Duplicates:     ${formatNumber(progress.duplicates)}`);
-  console.log(`  Violations:     ${formatNumber(progress.violations)}`);
+  console.log(`  Invalid events: ${formatNumber(progress.invalidEvents)}`);
+  console.log(`  Violation errs: ${formatNumber(progress.violationErrors)}`);
 
   if (progress.rateLimits > 0) {
     console.log('');
