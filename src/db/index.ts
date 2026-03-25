@@ -250,15 +250,15 @@ export function getViolationDetails(): Array<{
 }
 
 export function getTopPubkeysForErrors(): Array<{
-  error_keyword: string | null; error_path: string | null; pubkey: string; cnt: number;
+  error_keyword: string | null; error_path: string | null; error_message: string; pubkey: string; cnt: number;
 }> {
   return getDb().prepare(`
-    SELECT v.error_keyword, v.error_path, e.pubkey, COUNT(*) as cnt
+    SELECT v.error_keyword, v.error_path, v.error_message, e.pubkey, COUNT(*) as cnt
     FROM violations v JOIN events e ON e.id = v.event_id
-    GROUP BY 1, 2, 3
-    ORDER BY 1, 2, cnt DESC
+    GROUP BY 1, 2, 3, 4
+    ORDER BY 1, 2, 3, cnt DESC
   `).all() as Array<{
-    error_keyword: string | null; error_path: string | null; pubkey: string; cnt: number;
+    error_keyword: string | null; error_path: string | null; error_message: string; pubkey: string; cnt: number;
   }>;
 }
 

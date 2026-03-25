@@ -175,10 +175,10 @@ function buildFindings(): Findings {
   }
 
   // Build error_patterns
-  // Index pubkeys by error_keyword+error_path
+  // Index pubkeys by error_keyword+error_path+error_message (aligned with patternMap key)
   const pubkeyIndex = new Map<string, Array<{ pubkey: string; cnt: number }>>();
   for (const p of pubkeyRows) {
-    const key = `${p.error_keyword ?? ''}\0${p.error_path ?? ''}`;
+    const key = `${p.error_keyword ?? ''}\0${p.error_path ?? ''}\0${p.error_message}`;
     if (!pubkeyIndex.has(key)) pubkeyIndex.set(key, []);
     pubkeyIndex.get(key)!.push({ pubkey: p.pubkey, cnt: p.cnt });
   }
@@ -207,9 +207,9 @@ function buildFindings(): Findings {
   }
 
   const errorPatterns = [...patternMap.values()];
-  // Fill top pubkeys
+  // Fill top pubkeys (keyed by keyword+path+message, matching patternMap)
   for (const p of errorPatterns) {
-    const pubkeyKey = `${p.keyword ?? ''}\0${p.path ?? ''}`;
+    const pubkeyKey = `${p.keyword ?? ''}\0${p.path ?? ''}\0${p.message}`;
     const pubs = pubkeyIndex.get(pubkeyKey) ?? [];
     p.top_pubkeys = pubs.slice(0, 5).map(x => x.pubkey);
   }
@@ -307,7 +307,7 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 <script>
 const FINDINGS = ${data};
 
-const KIND_NAMES = ${JSON.stringify(KIND_NAMES)};
+const KIND_NAMES = ${JSON.stringify(KIND_NAMES).replace(/</g, '\\u003c')};
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function pct(n, t) { return t > 0 ? (n/t*100).toFixed(1) + '%' : '0.0%'; }
