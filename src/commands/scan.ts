@@ -41,7 +41,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
 
   // Parse relays
   const relays = opts.relays
-    ? opts.relays.split(',').map(r => r.trim())
+    ? opts.relays.split(',').map(r => r.trim()).filter(Boolean)
     : DEFAULT_RELAYS;
 
   // Determine since timestamp.

@@ -354,9 +354,11 @@ document.querySelectorAll('.tab').forEach(tab => {
     html += '<tr data-kind="kind-' + k + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
     // Detail rows: per-app breakdown
     const apps = Object.keys(d.by_app).sort((a,b) => d.by_app[b].total - d.by_app[a].total);
+    let kindAppIdx = 0;
     for (const app of apps) {
       const a = d.by_app[app];
-      html += '<tr class="detail" id="' + detailId + '" data-parent="kind-' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
+      html += '<tr class="detail" id="' + detailId + '-' + kindAppIdx + '" data-parent="kind-' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
+      kindAppIdx++;
     }
   }
   html += '</tbody></table>';
@@ -377,8 +379,10 @@ document.querySelectorAll('.tab').forEach(tab => {
     const parentKey = 'app-' + appIdx;
     html += '<tr data-app="' + parentKey + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
     // Detail rows: violations
+    let violIdx = 0;
     for (const v of d.violations.slice(0, 10)) {
-      html += '<tr class="detail" id="' + detailId + '" data-parent="' + parentKey + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" title="Click to copy ' + id + '" onclick="navigator.clipboard.writeText(\\'' + id + '\\')">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
+      html += '<tr class="detail" id="' + detailId + '-' + violIdx + '" data-parent="' + parentKey + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" title="Click to copy ' + id + '" onclick="navigator.clipboard.writeText(\\'' + id + '\\')">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
+      violIdx++;
     }
     appIdx++;
   }
