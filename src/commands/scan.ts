@@ -108,82 +108,84 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   const scanRunId = createScanRun(kinds, relays, since);
   console.log(`  Scan run #${scanRunId}`);
 
-  // Load attribution data
-  console.log('  Loading attribution data...');
-  const nip89Map = await fetchNip89Handlers(relays);
-  console.log(`  NIP-89 handlers: ${nip89Map.size} pubkeys mapped`);
-  const fingerprints = loadFingerprints();
-  console.log(`  Fingerprints: ${fingerprints.length} app patterns loaded`);
-  console.log('');
-
   const startTime = Date.now();
 
-  await fetchEvents({
-    kinds,
-    relays,
-    since,
-    perKindSince,
-    onRelayStart: (relay, index, total) => {
-      console.log(`  [relay ${index + 1}/${total}] ${relay}`);
-    },
-    onRelayDone: (relay, count) => {
-      console.log(`  [done] ${relay}: ${formatNumber(count)} events\n`);
-    },
-    onBatchStart: (_relay, batchKinds, batchIndex, totalBatches) => {
-      console.log(`    batch ${batchIndex + 1}/${totalBatches}: kinds [${batchKinds.join(', ')}]`);
-    },
-    onRateLimit: (event) => {
-      progress.rateLimits++;
-      rateLimitEvents.push(event);
-      console.error(`    !! RATE LIMITED by ${event.relay}: ${event.reason}`);
-    },
-    onEvent: (event, relay) => {
-      progress.fetched++;
+  try {
+    // Load attribution data
+    console.log('  Loading attribution data...');
+    const nip89Map = await fetchNip89Handlers(relays);
+    console.log(`  NIP-89 handlers: ${nip89Map.size} pubkeys mapped`);
+    const fingerprints = loadFingerprints();
+    console.log(`  Fingerprints: ${fingerprints.length} app patterns loaded`);
+    console.log('');
 
-      const validation = validateEvent(event);
-      const semanticIssues = runSemanticChecks(event);
+    await fetchEvents({
+      kinds,
+      relays,
+      since,
+      perKindSince,
+      onRelayStart: (relay, index, total) => {
+        console.log(`  [relay ${index + 1}/${total}] ${relay}`);
+      },
+      onRelayDone: (relay, count) => {
+        console.log(`  [done] ${relay}: ${formatNumber(count)} events\n`);
+      },
+      onBatchStart: (_relay, batchKinds, batchIndex, totalBatches) => {
+        console.log(`    batch ${batchIndex + 1}/${totalBatches}: kinds [${batchKinds.join(', ')}]`);
+      },
+      onRateLimit: (event) => {
+        progress.rateLimits++;
+        rateLimitEvents.push(event);
+        console.error(`    !! RATE LIMITED by ${event.relay}: ${event.reason}`);
+      },
+      onEvent: (event, relay) => {
+        progress.fetched++;
 
-      // Add semantic violations to validation errors for storage
-      for (const issue of semanticIssues) {
-        validation.errors.push({
-          instancePath: issue.path,
-          schemaPath: '',
-          keyword: issue.check_name,
-          params: { severity: issue.severity },
-          message: issue.message,
-        });
-        if (validation.valid !== false && issue.severity === 'error') {
-          validation.valid = false;
+        const validation = validateEvent(event);
+        const semanticIssues = runSemanticChecks(event);
+
+        // Add semantic violations to validation errors for storage
+        for (const issue of semanticIssues) {
+          validation.errors.push({
+            instancePath: issue.path,
+            schemaPath: '',
+            keyword: issue.check_name,
+            params: { severity: issue.severity },
+            message: issue.message,
+          });
+          if (validation.valid !== false && issue.severity === 'error') {
+            validation.valid = false;
+          }
         }
-      }
 
-      const attribution = resolveAttribution(event, nip89Map, fingerprints);
-      const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution);
+        const attribution = resolveAttribution(event, nip89Map, fingerprints);
+        const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution);
 
-      if (!isNew) {
-        progress.duplicates++;
-      } else {
-        progress.newEvents++;
-        if (validation.valid === false) {
-          progress.violations += validation.errors.length;
+        if (!isNew) {
+          progress.duplicates++;
+        } else {
+          progress.newEvents++;
+          if (validation.errors.length > 0) {
+            progress.violations += validation.errors.length;
+          }
         }
-      }
 
-      if (progress.fetched % 500 === 0) {
-        process.stdout.write(`\r    ${formatNumber(progress.fetched)} events processed...`);
-      }
-    },
-    onError: (error) => {
-      console.error(`\n  Warning: ${error}`);
-    },
-  });
-
-  // Finalize scan run
-  finishScanRun(scanRunId, {
-    events_fetched: progress.fetched,
-    events_new: progress.newEvents,
-    violations_found: progress.violations,
-  });
+        if (progress.fetched % 500 === 0) {
+          process.stdout.write(`\r    ${formatNumber(progress.fetched)} events processed...`);
+        }
+      },
+      onError: (error) => {
+        console.error(`\n  Warning: ${error}`);
+      },
+    });
+  } finally {
+    // Always finalize scan run, even on error
+    finishScanRun(scanRunId, {
+      events_fetched: progress.fetched,
+      events_new: progress.newEvents,
+      violations_found: progress.violations,
+    });
+  }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log('');

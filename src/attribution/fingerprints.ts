@@ -20,9 +20,15 @@ export function loadFingerprints(): AppFingerprint[] {
   try {
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as unknown[];
-    cached = parsed.filter((entry): entry is AppFingerprint =>
-      typeof entry === 'object' && entry !== null && 'app_name' in entry
-    );
+    cached = parsed.filter((entry): entry is AppFingerprint => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.app_name !== 'string') return false;
+      if (e.pubkey_prefix !== undefined && !(Array.isArray(e.pubkey_prefix) && e.pubkey_prefix.every(v => typeof v === 'string'))) return false;
+      if (e.tag_pattern !== undefined && !Array.isArray(e.tag_pattern)) return false;
+      if (e.content_pattern !== undefined && !(Array.isArray(e.content_pattern) && e.content_pattern.every(v => typeof v === 'string'))) return false;
+      return true;
+    });
     return cached;
   } catch (err) {
     console.error(`Warning: Failed to load fingerprints from ${filePath}: ${err}`);

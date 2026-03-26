@@ -61,8 +61,16 @@ function runMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE events ADD COLUMN attribution_confidence TEXT');
   }
 
+  // Migrate violations table (for existing DBs created before severity column)
+  const violCols = db.prepare("PRAGMA table_info(violations)").all() as Array<{ name: string }>;
+  const violColNames = new Set(violCols.map(c => c.name));
+  if (!violColNames.has('severity')) {
+    db.exec("ALTER TABLE violations ADD COLUMN severity TEXT NOT NULL DEFAULT 'error'");
+  }
+
   // Create indexes on migrated columns (safe to run idempotently)
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_scan_run ON events(scan_run_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_violations_severity ON violations(severity)');
 }
 
 let db: Database.Database | null = null;
@@ -271,6 +279,8 @@ export function getViolationDetails(): Array<{
           AND e2.kind = base.kind
           AND v2.error_keyword IS base.error_keyword
           AND v2.error_path IS base.error_path
+          AND v2.error_message = base.error_message
+          AND v2.severity IS base.severity
         LIMIT 3
       )
     ) as sample_event_ids

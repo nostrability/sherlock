@@ -14,11 +14,13 @@ function sleep(ms: number): Promise<void> {
  *
  * Follows relay-friendly conventions: sequential relay scanning with pauses.
  */
+type HandlerEntry = { name: string; address: string; created_at: number; id: string };
+
 export async function fetchNip89Handlers(relays: string[]): Promise<Map<string, { name: string; address: string }>> {
   const nakPath = await which('nak');
   if (!nakPath) return new Map();
 
-  const handlers = new Map<string, { name: string; address: string }>();
+  const handlers = new Map<string, HandlerEntry>();
 
   for (let i = 0; i < relays.length; i++) {
     const relay = relays[i];
@@ -35,7 +37,12 @@ export async function fetchNip89Handlers(relays: string[]): Promise<Map<string, 
     }
   }
 
-  return handlers;
+  // Strip internal fields before returning
+  const result = new Map<string, { name: string; address: string }>();
+  for (const [pubkey, entry] of handlers) {
+    result.set(pubkey, { name: entry.name, address: entry.address });
+  }
+  return result;
 }
 
 const NAK_TIMEOUT_MS = 60_000; // 60s max per relay
@@ -113,7 +120,7 @@ function fetchKind31990(nakPath: string, relay: string): Promise<NostrEvent[]> {
  */
 function processHandlerEvent(
   event: NostrEvent,
-  handlers: Map<string, { name: string; address: string }>,
+  handlers: Map<string, HandlerEntry>,
 ): void {
   try {
     // Try to parse content for app name
@@ -142,10 +149,12 @@ function processHandlerEvent(
     const dTag = event.tags.find(t => t[0] === 'd');
     const address = `31990:${event.pubkey}:${dTag?.[1] ?? ''}`;
 
-    // Map the handler's pubkey to the app
-    // Don't overwrite existing entries (first seen wins, usually most popular)
-    if (!handlers.has(event.pubkey)) {
-      handlers.set(event.pubkey, { name: appName, address });
+    // Map the handler's pubkey to the app — keep the newest event per pubkey
+    const existing = handlers.get(event.pubkey);
+    if (!existing) {
+      handlers.set(event.pubkey, { name: appName, address, created_at: event.created_at, id: event.id });
+    } else if (event.created_at > existing.created_at || (event.created_at === existing.created_at && event.id < existing.id)) {
+      handlers.set(event.pubkey, { name: appName, address, created_at: event.created_at, id: event.id });
     }
   } catch { /* skip malformed handler events */ }
 }

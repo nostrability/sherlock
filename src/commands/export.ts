@@ -614,6 +614,11 @@ document.addEventListener('click', function(e) {
 
 // --- Nostr publishing ---
 
+/** Sanitize a string for safe interpolation into Nostr kind:1/kind:30023 text. */
+function sanitizeText(s: string): string {
+  return s.replace(/[\r\n|]/g, ' ').trim();
+}
+
 function buildKind1Summary(findings: Findings): string {
   const c = findings.scan_coverage;
   const totalValidated = c.total_valid + c.total_invalid;
@@ -647,7 +652,7 @@ function buildKind1Summary(findings: Findings): string {
   if (namedApps.length > 0) {
     text += `Apps with violations:\n`;
     for (const [name, data] of namedApps) {
-      text += `• ${name}: ${data.total_invalid} invalid of ${data.total_events}\n`;
+      text += `• ${sanitizeText(name)}: ${data.total_invalid} invalid of ${data.total_events}\n`;
     }
     text += '\n';
   }
@@ -692,7 +697,7 @@ function buildKind30023Content(findings: Findings): string {
     md += `|-----|--------|-------|---------|------------|\n`;
     for (const [name, data] of namedApps) {
       const ratePct = (data.error_rate * 100).toFixed(1);
-      md += `| ${name} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
+      md += `| ${sanitizeText(name)} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
     }
     md += '\n';
   }
