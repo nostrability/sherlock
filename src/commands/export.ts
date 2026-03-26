@@ -10,8 +10,14 @@ import {
   getTopPubkeysForErrors,
   getTimeRange,
   getDistinctRelays,
+  getAttributionSummary,
+  getPubkeyDistribution,
+  getTagFrequency,
+  getSampleEvents,
+  getAppTrend,
+  getAllAppTrends,
 } from '../db/index.js';
-import { KIND_NAMES, STATUS_THRESHOLDS, GITHUB_REPO, DEFAULT_KINDS, PUBLISH_RELAYS } from '../config.js';
+import { KIND_NAMES, STATUS_THRESHOLDS, GITHUB_REPO, DEFAULT_KINDS } from '../config.js';
 import { which } from '../util.js';
 
 // --- Types ---
@@ -21,12 +27,17 @@ interface KindFindings {
   schema_key: string;
   total: number; valid: number; invalid: number; error_rate: number;
   top_errors: Array<{ keyword: string | null; path: string | null; message: string; count: number }>;
-  by_app: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string }>;
+  semantic_warnings: Array<{ check_name: string; message: string; count: number }>;
+  by_app: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string; attribution_method?: string }>;
+  unique_pubkeys: number;
 }
 
 interface AppFindings {
   total_events: number; total_valid: number; total_invalid: number; error_rate: number;
   kinds_published: number[];
+  unique_pubkeys: number;
+  is_widespread: boolean;
+  attribution_method?: string;
   violations: Array<{
     kind: number; keyword: string | null; path: string | null;
     message: string; count: number; sample_event_ids: string[];
@@ -41,6 +52,18 @@ interface ErrorPattern {
   top_pubkeys: string[];
 }
 
+interface TrendDataPoint {
+  date: string;
+  error_rate: number;
+  events: number;
+  invalid: number;
+}
+
+interface AppTrend {
+  direction: 'improving' | 'worsening' | 'stable' | 'insufficient_data';
+  data_points: TrendDataPoint[];
+}
+
 interface Findings {
   version: number;
   generated_at: string;
@@ -50,9 +73,11 @@ interface Findings {
     relays: string[];
     first_event_at: string | null; last_event_at: string | null;
   };
+  attribution_summary: Record<string, number>;
   by_kind: Record<string, KindFindings>;
   by_app: Record<string, AppFindings>;
   error_patterns: ErrorPattern[];
+  trends: { by_app: Record<string, AppTrend> };
 }
 
 export interface ExportCommandOptions {
@@ -62,11 +87,10 @@ export interface ExportCommandOptions {
 
 // --- Helpers ---
 
-function computeStatus(valid: number, invalid: number): string {
-  const validated = valid + invalid;
-  if (validated < STATUS_THRESHOLDS.MIN_EVENTS) return 'u';
+function computeStatus(total: number, invalid: number): string {
+  if (total < STATUS_THRESHOLDS.MIN_EVENTS) return 'u';
   if (invalid === 0) return 'y';
-  if (invalid / validated <= STATUS_THRESHOLDS.ALMOST_MAX) return 'a';
+  if (invalid / total <= STATUS_THRESHOLDS.ALMOST_MAX) return 'a';
   return 'n';
 }
 
@@ -75,6 +99,24 @@ function ts(unix: number | null): string | null {
 }
 
 // --- Build findings ---
+
+function computeTrendDirection(dataPoints: TrendDataPoint[]): AppTrend['direction'] {
+  if (dataPoints.length < 6) return 'insufficient_data';
+
+  const recent = dataPoints.slice(-3);
+  const previous = dataPoints.slice(-6, -3);
+
+  const avgRecent = recent.reduce((sum, d) => sum + d.error_rate, 0) / recent.length;
+  const avgPrevious = previous.reduce((sum, d) => sum + d.error_rate, 0) / previous.length;
+
+  if (avgPrevious === 0 && avgRecent === 0) return 'stable';
+  if (avgPrevious === 0) return 'worsening';
+
+  const change = (avgRecent - avgPrevious) / avgPrevious;
+  if (change < -0.20) return 'improving';
+  if (change > 0.20) return 'worsening';
+  return 'stable';
+}
 
 function buildFindings(): Findings {
   getDb(); // ensure initialized
@@ -86,6 +128,20 @@ function buildFindings(): Findings {
   const pubkeyRows = getTopPubkeysForErrors();
   const timeRange = getTimeRange();
   const relays = getDistinctRelays();
+  const attrSummary = getAttributionSummary();
+  const pubkeyDist = getPubkeyDistribution();
+
+  // Attribution summary as object
+  const attributionSummary: Record<string, number> = {};
+  for (const row of attrSummary) {
+    attributionSummary[row.method] = row.count;
+  }
+
+  // Index pubkey distribution by client_name+kind
+  const pubkeyIndex2 = new Map<string, number>();
+  for (const row of pubkeyDist) {
+    pubkeyIndex2.set(`${row.client_name}\0${row.kind}`, row.unique_pubkeys);
+  }
 
   // Aggregate totals
   let totalValid = 0, totalInvalid = 0, totalNoSchema = 0;
@@ -95,14 +151,14 @@ function buildFindings(): Findings {
     totalNoSchema += r.no_schema;
   }
 
-  // Build by_kind (use Object.create(null) to prevent prototype pollution from client-controlled keys)
-  const findingsByKind: Record<string, KindFindings> = Object.create(null);
+  // Build by_kind
+  const findingsByKind: Record<string, KindFindings> = {};
   for (const r of byKind) {
     const validated = r.valid + r.invalid;
     const errorRate = validated > 0 ? r.invalid / validated : 0;
 
     // Per-app breakdown for this kind
-    const appBreakdown: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string }> = Object.create(null);
+    const appBreakdown: Record<string, { total: number; valid: number; invalid: number; error_rate: number; status: string; attribution_method?: string }> = {};
     for (const m of matrix) {
       if (m.kind === r.kind) {
         const mValidated = m.valid + m.invalid;
@@ -110,27 +166,54 @@ function buildFindings(): Findings {
         appBreakdown[m.client_name] = {
           total: m.total, valid: m.valid, invalid: m.invalid,
           error_rate: Math.round(mRate * 10000) / 10000,
-          status: computeStatus(m.valid, m.invalid),
+          status: computeStatus(m.total, m.invalid),
         };
       }
     }
 
-    // Top errors for this kind
+    // Top errors for this kind (schema validation errors)
     const kindErrors: Array<{ keyword: string | null; path: string | null; message: string; count: number }> = [];
+    const semanticWarnings: Array<{ check_name: string; message: string; count: number }> = [];
+
     for (const v of violations) {
       if (v.kind === r.kind) {
-        // Deduplicate across apps — aggregate by keyword+path+message
-        const existing = kindErrors.find(
-          e => e.keyword === v.error_keyword && e.path === v.error_path && e.message === v.error_message
+        // Separate semantic warnings from schema errors
+        const isSemantic = v.error_keyword && (
+          v.error_keyword.startsWith('kind0_') ||
+          v.error_keyword.startsWith('kind3_') ||
+          v.error_keyword.startsWith('kind10002_') ||
+          v.error_keyword.startsWith('kind9735_') ||
+          v.error_keyword === 'future_timestamp' ||
+          v.error_keyword === 'timestamp_too_old'
         );
-        if (existing) {
-          existing.count += v.count;
+
+        if (isSemantic) {
+          const existing = semanticWarnings.find(w => w.check_name === v.error_keyword && w.message === v.error_message);
+          if (existing) {
+            existing.count += v.count;
+          } else {
+            semanticWarnings.push({ check_name: v.error_keyword!, message: v.error_message, count: v.count });
+          }
         } else {
-          kindErrors.push({ keyword: v.error_keyword, path: v.error_path, message: v.error_message, count: v.count });
+          const existing = kindErrors.find(
+            e => e.keyword === v.error_keyword && e.path === v.error_path && e.message === v.error_message
+          );
+          if (existing) {
+            existing.count += v.count;
+          } else {
+            kindErrors.push({ keyword: v.error_keyword, path: v.error_path, message: v.error_message, count: v.count });
+          }
         }
       }
     }
     kindErrors.sort((a, b) => b.count - a.count);
+    semanticWarnings.sort((a, b) => b.count - a.count);
+
+    // Count unique pubkeys for this kind
+    let kindPubkeys = 0;
+    for (const [key, count] of pubkeyIndex2) {
+      if (key.endsWith(`\0${r.kind}`)) kindPubkeys += count;
+    }
 
     findingsByKind[String(r.kind)] = {
       name: KIND_NAMES[r.kind] ?? `Kind ${r.kind}`,
@@ -138,17 +221,20 @@ function buildFindings(): Findings {
       total: r.total, valid: r.valid, invalid: r.invalid,
       error_rate: Math.round(errorRate * 10000) / 10000,
       top_errors: kindErrors.slice(0, 10),
+      semantic_warnings: semanticWarnings.slice(0, 10),
       by_app: appBreakdown,
+      unique_pubkeys: kindPubkeys,
     };
   }
 
   // Build by_app
-  const findingsByApp: Record<string, AppFindings> = Object.create(null);
+  const findingsByApp: Record<string, AppFindings> = {};
   for (const m of matrix) {
     if (!findingsByApp[m.client_name]) {
       findingsByApp[m.client_name] = {
         total_events: 0, total_valid: 0, total_invalid: 0, error_rate: 0,
-        kinds_published: [], violations: [],
+        kinds_published: [], unique_pubkeys: 0, is_widespread: false,
+        violations: [],
       };
     }
     const app = findingsByApp[m.client_name];
@@ -156,6 +242,10 @@ function buildFindings(): Findings {
     app.total_valid += m.valid;
     app.total_invalid += m.invalid;
     app.kinds_published.push(m.kind);
+
+    // Add pubkey count for this app+kind
+    const pk = pubkeyIndex2.get(`${m.client_name}\0${m.kind}`) ?? 0;
+    app.unique_pubkeys += pk;
   }
   // Fill violations and compute error rates
   for (const v of violations) {
@@ -168,18 +258,20 @@ function buildFindings(): Findings {
       });
     }
   }
-  for (const app of Object.values(findingsByApp)) {
+  for (const [, app] of Object.entries(findingsByApp)) {
     const validated = app.total_valid + app.total_invalid;
     app.error_rate = validated > 0 ? Math.round(app.total_invalid / validated * 10000) / 10000 : 0;
     app.kinds_published.sort((a, b) => a - b);
     app.violations.sort((a, b) => b.count - a.count);
+    // Widespread = many unique pubkeys (>10 suggests client bug, not individual misconfiguration)
+    app.is_widespread = app.unique_pubkeys > 10;
   }
 
   // Build error_patterns
-  // Index pubkeys by error_keyword+error_path+error_message (aligned with patternMap key)
+  // Index pubkeys by error_keyword+error_path
   const pubkeyIndex = new Map<string, Array<{ pubkey: string; cnt: number }>>();
   for (const p of pubkeyRows) {
-    const key = `${p.error_keyword ?? ''}\0${p.error_path ?? ''}\0${p.error_message}`;
+    const key = `${p.error_keyword ?? ''}\0${p.error_path ?? ''}`;
     if (!pubkeyIndex.has(key)) pubkeyIndex.set(key, []);
     pubkeyIndex.get(key)!.push({ pubkey: p.pubkey, cnt: p.cnt });
   }
@@ -208,36 +300,53 @@ function buildFindings(): Findings {
   }
 
   const errorPatterns = [...patternMap.values()];
-  // Fill top pubkeys (keyed by keyword+path+message, matching patternMap)
+  // Fill top pubkeys
   for (const p of errorPatterns) {
-    const pubkeyKey = `${p.keyword ?? ''}\0${p.path ?? ''}\0${p.message}`;
+    const pubkeyKey = `${p.keyword ?? ''}\0${p.path ?? ''}`;
     const pubs = pubkeyIndex.get(pubkeyKey) ?? [];
     p.top_pubkeys = pubs.slice(0, 5).map(x => x.pubkey);
   }
   errorPatterns.sort((a, b) => b.total_count - a.total_count);
 
+  // Build trends
+  const trendsByApp: Record<string, AppTrend> = {};
+  const allApps = Object.keys(findingsByApp);
+  for (const appName of allApps) {
+    const rawTrend = getAppTrend(appName);
+    const dataPoints: TrendDataPoint[] = rawTrend.map(t => ({
+      date: t.period,
+      error_rate: t.error_rate,
+      events: t.total,
+      invalid: t.invalid,
+    }));
+    trendsByApp[appName] = {
+      direction: computeTrendDirection(dataPoints),
+      data_points: dataPoints,
+    };
+  }
+
   return {
-    version: 1,
+    version: 2,
     generated_at: new Date().toISOString(),
     scan_coverage: {
       total_events: total, total_valid: totalValid, total_invalid: totalInvalid, total_no_schema: totalNoSchema,
-      // Include all configured kinds (not just those with events) so zero-hit kinds are visible
-      kinds_scanned: [...new Set([...DEFAULT_KINDS, ...byKind.map(r => r.kind)])].sort((a, b) => a - b),
+      kinds_scanned: byKind.map(r => r.kind).sort((a, b) => a - b),
       relays,
       first_event_at: ts(timeRange.first_at),
       last_event_at: ts(timeRange.last_at),
     },
+    attribution_summary: attributionSummary,
     by_kind: findingsByKind,
     by_app: findingsByApp,
     error_patterns: errorPatterns,
+    trends: { by_app: trendsByApp },
   };
 }
 
 // --- HTML dashboard ---
 
 function generateHtml(findings: Findings): string {
-  // Escape </script> sequences to prevent XSS breakout from inline <script> tag.
-  // Also escape <!-- to prevent HTML comment injection.
+  // Escape for safe embedding in HTML: replace </ to prevent </script> breakout
   const data = JSON.stringify(findings).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html lang="en">
@@ -246,8 +355,8 @@ function generateHtml(findings: Findings): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sherlock — Nostr Schema Validation Report</title>
 <style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --border: #e0e0e0; --hover: #f5f5f5; --accent: #4a90d9; --green: #22863a; --yellow: #b08800; --red: #cb2431; --badge-bg: #f0f0f0; }
-@media(prefers-color-scheme:dark) { :root { --bg: #0d1117; --fg: #c9d1d9; --muted: #8b949e; --border: #30363d; --hover: #161b22; --accent: #58a6ff; --green: #3fb950; --yellow: #d29922; --red: #f85149; --badge-bg: #21262d; } }
+:root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --border: #e0e0e0; --hover: #f5f5f5; --accent: #4a90d9; --green: #22863a; --yellow: #b08800; --red: #cb2431; --badge-bg: #f0f0f0; --warn-bg: #fff8e1; }
+@media(prefers-color-scheme:dark) { :root { --bg: #0d1117; --fg: #c9d1d9; --muted: #8b949e; --border: #30363d; --hover: #161b22; --accent: #58a6ff; --green: #3fb950; --yellow: #d29922; --red: #f85149; --badge-bg: #21262d; --warn-bg: #2d2200; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; max-width: 1200px; margin: 0 auto; padding: 20px; }
 h1 { font-size: 1.5rem; margin-bottom: 4px; }
@@ -267,11 +376,12 @@ table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
 td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
 tr:hover { background: var(--hover); }
+tr.expandable { cursor: pointer; }
+tr.expandable td:first-child::before { content: "\\25b8 "; color: var(--muted); }
+tr.expandable.open td:first-child::before { content: "\\25be "; }
 tr.detail { display: none; }
 tr.detail.open { display: table-row; }
 tr.detail td { padding-left: 32px; background: var(--hover); }
-.expand-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 0.85rem; padding: 0 4px 0 0; vertical-align: middle; }
-.expand-btn:hover { color: var(--fg); }
 .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .status-y { background: var(--green); }
 .status-a { background: var(--yellow); }
@@ -279,6 +389,9 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 .status-u { background: var(--muted); }
 .mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.8rem; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--badge-bg); font-size: 0.75rem; margin: 1px; }
+.badge-method { font-size: 0.65rem; padding: 0 4px; }
+.badge-warn { background: var(--warn-bg); color: var(--yellow); }
+.badge-pubkey { font-size: 0.7rem; color: var(--muted); margin-left: 4px; }
 .rate { font-weight: 600; }
 .rate-good { color: var(--green); }
 .rate-warn { color: var(--yellow); }
@@ -287,6 +400,16 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 .copy { cursor: pointer; color: var(--accent); }
 .copy:hover { text-decoration: underline; }
 .empty { text-align: center; padding: 40px; color: var(--muted); }
+.sparkline { display: inline-flex; align-items: flex-end; gap: 1px; height: 24px; vertical-align: middle; }
+.sparkline span { display: inline-block; width: 4px; min-height: 1px; background: var(--accent); border-radius: 1px 1px 0 0; }
+.sparkline span.bar-bad { background: var(--red); }
+.sparkline span.bar-warn { background: var(--yellow); }
+.sparkline span.bar-good { background: var(--green); }
+.trend-arrow { font-weight: 700; margin-left: 4px; }
+.trend-improving { color: var(--green); }
+.trend-worsening { color: var(--red); }
+.trend-stable { color: var(--muted); }
+.trend-insufficient { color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body>
@@ -299,26 +422,57 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
   <button class="tab active" data-tab="kind">By Kind</button>
   <button class="tab" data-tab="app">By App</button>
   <button class="tab" data-tab="errors">Errors</button>
+  <button class="tab" data-tab="trends">Trends</button>
 </div>
 
 <div class="panel active" id="panel-kind"></div>
 <div class="panel" id="panel-app"></div>
 <div class="panel" id="panel-errors"></div>
+<div class="panel" id="panel-trends"></div>
 
 <script>
-const FINDINGS = ${data};
+var FINDINGS = ${data};
 
-const KIND_NAMES = ${JSON.stringify(KIND_NAMES).replace(/</g, '\\u003c')};
+var KIND_NAMES = ${JSON.stringify(KIND_NAMES)};
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 function pct(n, t) { return t > 0 ? (n/t*100).toFixed(1) + '%' : '0.0%'; }
 function rateClass(rate) { return rate === 0 ? 'rate-good' : rate <= 0.05 ? 'rate-warn' : 'rate-bad'; }
 function statusDot(s) { return '<span class="status status-' + s + '" title="' + ({y:'clean',a:'almost',n:'broken',u:'unknown'}[s]||s) + '"></span>'; }
-function shortId(id) { return id ? id.slice(0, 8) + '…' : ''; }
+function shortId(id) { return id ? id.slice(0, 8) + '\\u2026' : ''; }
+function methodBadge(m) {
+  if (!m) return '';
+  var labels = {client_tag:'tag',nip89_pubkey:'nip89',fingerprint:'fp'};
+  return ' <span class="badge badge-method">' + (labels[m]||m) + '</span>';
+}
+function trendArrow(dir) {
+  var arrows = {improving:'\\u2193',worsening:'\\u2191',stable:'\\u2192',insufficient_data:'?'};
+  var cls = 'trend-' + (dir === 'insufficient_data' ? 'insufficient' : dir);
+  return '<span class="trend-arrow ' + cls + '">' + (arrows[dir]||'?') + '</span>';
+}
+function sparkline(points) {
+  if (!points || !points.length) return '';
+  var maxRate = 0;
+  for (var i=0;i<points.length;i++) { if (points[i].error_rate > maxRate) maxRate = points[i].error_rate; }
+  if (maxRate === 0) maxRate = 1;
+  var html = '<span class="sparkline">';
+  var recent = points.slice(-30);
+  for (var i=0;i<recent.length;i++) {
+    var h = Math.max(1, Math.round(recent[i].error_rate / maxRate * 24));
+    var cls = recent[i].error_rate === 0 ? 'bar-good' : recent[i].error_rate <= 0.05 ? 'bar-warn' : 'bar-bad';
+    html += '<span class="' + cls + '" style="height:' + h + 'px" title="' + esc(recent[i].date) + ': ' + (recent[i].error_rate*100).toFixed(1) + '%"></span>';
+  }
+  html += '</span>';
+  return html;
+}
+function copyText(text) { navigator.clipboard.writeText(text); }
 
 // Coverage
 (function() {
-  const c = FINDINGS.scan_coverage;
+  var c = FINDINGS.scan_coverage;
+  var a = FINDINGS.attribution_summary || {};
+  var attrParts = Object.keys(a).filter(function(k){return k!=='unattributed'}).map(function(k){return k + ': ' + a[k]});
+  var attrText = attrParts.length ? attrParts.join(', ') : 'none';
   document.getElementById('coverage').innerHTML = [
     stat('Events', c.total_events.toLocaleString()),
     stat('Valid', c.total_valid.toLocaleString()),
@@ -326,15 +480,16 @@ function shortId(id) { return id ? id.slice(0, 8) + '…' : ''; }
     stat('No Schema', c.total_no_schema.toLocaleString()),
     stat('Kinds', c.kinds_scanned.length),
     stat('Relays', c.relays.length),
+    stat('Attributed', attrText),
   ].join('');
   function stat(label, value) { return '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>'; }
 })();
 
 // Tabs
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+document.querySelectorAll('.tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
     tab.classList.add('active');
     document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
   });
@@ -342,20 +497,32 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 // By Kind
 (function() {
-  const bk = FINDINGS.by_kind;
-  const kinds = Object.keys(bk).sort((a,b) => Number(a) - Number(b));
+  var bk = FINDINGS.by_kind;
+  var kinds = Object.keys(bk).sort(function(a,b) { return Number(a) - Number(b); });
   if (!kinds.length) { document.getElementById('panel-kind').innerHTML = '<div class="empty">No data</div>'; return; }
-  let html = '<table><thead><tr><th>Kind</th><th>Name</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Top Error</th></tr></thead><tbody>';
-  for (const k of kinds) {
-    const d = bk[k];
-    const topErr = d.top_errors[0];
-    const rc = rateClass(d.error_rate);
-    html += '<tr><td><button type="button" class="expand-btn" aria-expanded="false">&#9656;</button>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
+  var html = '<table><thead><tr><th>Kind</th><th>Name</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Top Error</th></tr></thead><tbody>';
+  for (var ki = 0; ki < kinds.length; ki++) {
+    var k = kinds[ki];
+    var d = bk[k];
+    var topErr = d.top_errors[0];
+    var rc = rateClass(d.error_rate);
+    var warnCount = d.semantic_warnings ? d.semantic_warnings.reduce(function(s,w){return s+w.count},0) : 0;
+    var warnBadge = warnCount > 0 ? ' <span class="badge badge-warn">' + warnCount + ' warns</span>' : '';
+    var pkBadge = d.unique_pubkeys ? '<span class="badge-pubkey">' + d.unique_pubkeys + ' pubkeys</span>' : '';
+    html += '<tr class="expandable" data-kind="' + k + '"><td>' + k + '</td><td>' + esc(d.name) + warnBadge + '</td><td>' + d.total.toLocaleString() + ' ' + pkBadge + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '\\u2014') + '</td></tr>';
     // Detail rows: per-app breakdown
-    const apps = Object.keys(d.by_app).sort((a,b) => d.by_app[b].total - d.by_app[a].total);
-    for (const app of apps) {
-      const a = d.by_app[app];
-      html += '<tr class="detail"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
+    var apps = Object.keys(d.by_app).sort(function(a,b) { return d.by_app[b].total - d.by_app[a].total; });
+    for (var ai = 0; ai < apps.length; ai++) {
+      var app = apps[ai];
+      var a = d.by_app[app];
+      html += '<tr class="detail" data-parent="' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + methodBadge(a.attribution_method) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
+    }
+    // Semantic warning detail rows
+    if (d.semantic_warnings && d.semantic_warnings.length) {
+      for (var wi = 0; wi < d.semantic_warnings.length; wi++) {
+        var w = d.semantic_warnings[wi];
+        html += '<tr class="detail" data-parent="' + k + '"><td></td><td colspan="4" class="mono"><span class="badge badge-warn">warn</span> ' + esc(w.check_name) + ': ' + esc(w.message) + '</td><td>' + w.count + '</td><td></td></tr>';
+      }
     }
   }
   html += '</tbody></table>';
@@ -364,17 +531,25 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 // By App
 (function() {
-  const ba = FINDINGS.by_app;
-  const apps = Object.keys(ba).sort((a,b) => ba[b].total_events - ba[a].total_events);
+  var ba = FINDINGS.by_app;
+  var trends = FINDINGS.trends ? FINDINGS.trends.by_app : {};
+  var apps = Object.keys(ba).sort(function(a,b) { return ba[b].total_events - ba[a].total_events; });
   if (!apps.length) { document.getElementById('panel-app').innerHTML = '<div class="empty">No data</div>'; return; }
-  let html = '<table><thead><tr><th>App</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Kinds</th></tr></thead><tbody>';
-  for (const app of apps) {
-    const d = ba[app];
-    const rc = rateClass(d.error_rate);
-    html += '<tr><td><button type="button" class="expand-btn" aria-expanded="false">&#9656;</button>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
+  var html = '<table><thead><tr><th>App</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Trend</th><th>Kinds</th></tr></thead><tbody>';
+  for (var ai = 0; ai < apps.length; ai++) {
+    var app = apps[ai];
+    var d = ba[app];
+    var rc = rateClass(d.error_rate);
+    var appId = 'app-' + ai;
+    var pkBadge = d.unique_pubkeys ? '<span class="badge-pubkey">' + d.unique_pubkeys + ' pubkeys</span>' : '';
+    var trend = trends[app];
+    var trendHtml = trend ? trendArrow(trend.direction) + ' ' + sparkline(trend.data_points) : '';
+    html += '<tr class="expandable" data-app="' + appId + '"><td>' + esc(app) + methodBadge(d.attribution_method) + '</td><td>' + d.total_events.toLocaleString() + ' ' + pkBadge + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + trendHtml + '</td><td>' + d.kinds_published.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td></tr>';
     // Detail rows: violations
-    for (const v of d.violations.slice(0, 10)) {
-      html += '<tr class="detail"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" data-copy="' + id + '" title="Click to copy ' + id + '">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
+    for (var vi = 0; vi < Math.min(d.violations.length, 10); vi++) {
+      var v = d.violations[vi];
+      var name = KIND_NAMES[v.kind] || 'kind:' + v.kind;
+      html += '<tr class="detail" data-parent="' + appId + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td></td><td class="mono">' + v.sample_event_ids.map(function(id) { return '<span class="copy" data-copy="' + esc(id) + '" title="Click to copy ' + esc(id) + '">' + shortId(id) + '</span>'; }).join(' ') + '</td></tr>';
     }
   }
   html += '</tbody></table>';
@@ -383,54 +558,61 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 // Errors
 (function() {
-  const errs = FINDINGS.error_patterns;
+  var errs = FINDINGS.error_patterns;
   if (!errs.length) { document.getElementById('panel-errors').innerHTML = '<div class="empty">No errors</div>'; return; }
-  let html = '<table><thead><tr><th>Error</th><th>Path</th><th>Message</th><th>Count</th><th>Kinds</th><th>Apps</th><th>Top Pubkeys</th></tr></thead><tbody>';
-  for (const e of errs.slice(0, 50)) {
-    html += '<tr><td class="mono">' + esc(e.keyword||'—') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(k => '<span class="badge">' + k + '</span>').join('') + '</td><td>' + e.affected_apps.map(a => '<span class="badge">' + esc(a) + '</span>').join('') + '</td><td class="mono">' + e.top_pubkeys.map(p => '<span class="copy" data-copy="' + p + '" title="' + p + '">' + p.slice(0,8) + '…</span>').join(' ') + '</td></tr>';
+  var html = '<table><thead><tr><th>Error</th><th>Path</th><th>Message</th><th>Count</th><th>Kinds</th><th>Apps</th><th>Top Pubkeys</th></tr></thead><tbody>';
+  for (var i = 0; i < Math.min(errs.length, 50); i++) {
+    var e = errs[i];
+    html += '<tr><td class="mono">' + esc(e.keyword||'\\u2014') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td><td>' + e.affected_apps.map(function(a) { return '<span class="badge">' + esc(a) + '</span>'; }).join('') + '</td><td class="mono">' + e.top_pubkeys.map(function(p) { return '<span class="copy" data-copy="' + esc(p) + '" title="' + esc(p) + '">' + p.slice(0,8) + '\\u2026</span>'; }).join(' ') + '</td></tr>';
   }
   html += '</tbody></table>';
   document.getElementById('panel-errors').innerHTML = html;
 })();
 
-// Expand/collapse detail rows via sibling traversal
-document.addEventListener('click', function(e) {
-  var btn = e.target.closest('.expand-btn');
-  if (!btn) return;
-  var row = btn.closest('tr');
-  if (!row) return;
-  var expanded = btn.getAttribute('aria-expanded') === 'true';
-  btn.setAttribute('aria-expanded', String(!expanded));
-  btn.innerHTML = expanded ? '&#9656;' : '&#9662;';
-  var sibling = row.nextElementSibling;
-  while (sibling && sibling.classList.contains('detail')) {
-    sibling.classList.toggle('open');
-    sibling = sibling.nextElementSibling;
+// Trends
+(function() {
+  var trends = FINDINGS.trends ? FINDINGS.trends.by_app : {};
+  var apps = Object.keys(trends).filter(function(a) { return trends[a].data_points.length > 0; });
+  apps.sort(function(a,b) {
+    var da = {improving:0,worsening:1,stable:2,insufficient_data:3};
+    var diff = (da[trends[a].direction]||3) - (da[trends[b].direction]||3);
+    if (diff !== 0) return diff;
+    return trends[b].data_points.length - trends[a].data_points.length;
+  });
+  if (!apps.length) { document.getElementById('panel-trends').innerHTML = '<div class="empty">No trend data yet. Run multiple scans to see trends.</div>'; return; }
+  var html = '<table><thead><tr><th>App</th><th>Direction</th><th>Sparkline (last 30d)</th><th>Latest Error Rate</th><th>Data Points</th></tr></thead><tbody>';
+  for (var i = 0; i < apps.length; i++) {
+    var app = apps[i];
+    var t = trends[app];
+    var last = t.data_points[t.data_points.length - 1];
+    var latestRate = last ? last.error_rate : 0;
+    html += '<tr><td>' + esc(app) + '</td><td>' + trendArrow(t.direction) + ' ' + esc(t.direction) + '</td><td>' + sparkline(t.data_points) + '</td><td class="rate ' + rateClass(latestRate) + '">' + (latestRate*100).toFixed(1) + '%</td><td>' + t.data_points.length + '</td></tr>';
   }
-});
+  html += '</tbody></table>';
+  document.getElementById('panel-trends').innerHTML = html;
+})();
 
-// Copy to clipboard via delegated handler
+// Expand/collapse rows + copy handler (delegated)
 document.addEventListener('click', function(e) {
-  var el = e.target.closest('[data-copy]');
-  if (el) navigator.clipboard.writeText(el.dataset.copy);
+  // Copy handler
+  var copyEl = e.target.closest('.copy[data-copy]');
+  if (copyEl) {
+    navigator.clipboard.writeText(copyEl.dataset.copy);
+    return;
+  }
+  // Expand/collapse
+  var row = e.target.closest('tr.expandable');
+  if (!row) return;
+  var key = row.dataset.kind || row.dataset.app;
+  row.classList.toggle('open');
+  row.closest('tbody').querySelectorAll('tr.detail[data-parent="' + key + '"]').forEach(function(r) { r.classList.toggle('open'); });
 });
 </script>
 </body>
 </html>`;
 }
 
-// --- Nostr publishing helpers ---
-
-/** Strip newlines and control chars from relay-derived text for plain-text notes. */
-function sanitizeText(s: string): string {
-  return s.replace(/[\r\n\t]+/g, ' ').trim();
-}
-
-/** Escape pipe and strip newlines for markdown table cells. */
-function mdCell(s: string): string {
-  return s.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '\\|').trim();
-}
-
+// --- Nostr publishing ---
 
 function buildKind1Summary(findings: Findings): string {
   const c = findings.scan_coverage;
@@ -465,7 +647,7 @@ function buildKind1Summary(findings: Findings): string {
   if (namedApps.length > 0) {
     text += `Apps with violations:\n`;
     for (const [name, data] of namedApps) {
-      text += `• ${sanitizeText(name)}: ${data.total_invalid} invalid of ${data.total_events}\n`;
+      text += `• ${name}: ${data.total_invalid} invalid of ${data.total_events}\n`;
     }
     text += '\n';
   }
@@ -510,7 +692,7 @@ function buildKind30023Content(findings: Findings): string {
     md += `|-----|--------|-------|---------|------------|\n`;
     for (const [name, data] of namedApps) {
       const ratePct = (data.error_rate * 100).toFixed(1);
-      md += `| ${mdCell(name)} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
+      md += `| ${name} | ${data.total_events.toLocaleString()} | ${data.total_valid.toLocaleString()} | ${data.total_invalid.toLocaleString()} | ${ratePct}% |\n`;
     }
     md += '\n';
   }
@@ -545,6 +727,12 @@ async function publishToNostr(findings: Findings): Promise<void> {
     return;
   }
 
+  const publishRelays = [
+    'wss://relay.damus.io',
+    'wss://nos.lol',
+    'wss://relay.nostr.band',
+  ];
+
   const now = Math.floor(Date.now() / 1000);
   const dateTag = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
@@ -561,7 +749,7 @@ async function publishToNostr(findings: Findings): Promise<void> {
       '-c', kind1Content,
       '-t', 't=sherlock',
       '-t', 't=nostrability',
-      ...PUBLISH_RELAYS,
+      ...publishRelays,
     ];
     const result1 = execFileSync(nakPath, kind1Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:1 published:', result1.trim().slice(0, 80));
@@ -584,7 +772,7 @@ async function publishToNostr(findings: Findings): Promise<void> {
       '-t', `published_at=${String(now)}`,
       '-t', 't=sherlock',
       '-t', 't=nostrability',
-      ...PUBLISH_RELAYS,
+      ...publishRelays,
     ];
     const result2 = execFileSync(nakPath, kind30023Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:30023 published:', result2.trim().slice(0, 80));

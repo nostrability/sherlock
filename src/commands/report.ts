@@ -3,6 +3,7 @@ import {
   getViolationsByClient,
   getViolationsByError,
   getRecentViolations,
+  getAllAppTrends,
   getDb,
 } from '../db/index.js';
 
@@ -33,8 +34,11 @@ export function reportCommand(opts: ReportCommandOptions): void {
     case 'recent':
       reportRecent(format, limit);
       break;
+    case 'trend':
+      reportByTrend(format, limit);
+      break;
     default:
-      console.error(`Unknown grouping: ${groupBy}. Use: kind, client, error, recent`);
+      console.error(`Unknown grouping: ${groupBy}. Use: kind, client, error, recent, trend`);
       process.exit(1);
   }
 }
@@ -163,6 +167,40 @@ function reportRecent(format: string, limit?: number): void {
     const msg = row.error_message.length > 38 ? row.error_message.slice(0, 35) + '...' : row.error_message;
     console.log(
       `${row.event_id.slice(0, 10).padEnd(12)} ${String(row.kind).padEnd(8)} ${(row.client_name ?? '-').padEnd(20)} ${msg.padEnd(40)}`
+    );
+  }
+}
+
+function reportByTrend(format: string, limit?: number): void {
+  const rows = getAllAppTrends(30);
+  const display = limit ? rows.slice(0, limit) : rows;
+
+  if (display.length === 0) {
+    console.log('No trend data. Run multiple scans to see trends.');
+    return;
+  }
+
+  if (format === 'json') {
+    console.log(JSON.stringify(display, null, 2));
+    return;
+  }
+
+  if (format === 'csv') {
+    console.log('client_name,total,invalid,error_rate,first_seen,last_seen,data_points');
+    for (const row of display) {
+      console.log(`${row.client_name},${row.total},${row.invalid},${row.error_rate},${row.first_seen},${row.last_seen},${row.data_points}`);
+    }
+    return;
+  }
+
+  console.log('\nApp Trends (last 30 days)\n');
+  console.log(`${'App'.padEnd(25)} ${'Events'.padStart(8)} ${'Invalid'.padStart(8)} ${'Error%'.padStart(8)} ${'Days'.padStart(6)} ${'Period'.padEnd(24)}`);
+  console.log('-'.repeat(83));
+  for (const row of display) {
+    const name = row.client_name.length > 23 ? row.client_name.slice(0, 20) + '...' : row.client_name;
+    const ratePct = (row.error_rate * 100).toFixed(1) + '%';
+    console.log(
+      `${name.padEnd(25)} ${String(row.total).padStart(8)} ${String(row.invalid).padStart(8)} ${ratePct.padStart(8)} ${String(row.data_points).padStart(6)} ${(row.first_seen + ' - ' + row.last_seen).padEnd(24)}`
     );
   }
 }
