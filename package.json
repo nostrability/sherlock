@@ -1,0 +1,39 @@
+{
+  "name": "@nostrability/sherlock",
+  "version": "0.1.0",
+  "description": "Passive relay listener that validates Nostr events against JSON Schemas and identifies apps producing malformed blobs",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nostrability/sherlock.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "sherlock": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "scan": "node dist/index.js scan",
+    "report": "node dist/index.js report",
+    "stats": "node dist/index.js stats"
+  },
+  "dependencies": {
+    "@nostrability/schemata": "^0.2.6",
+    "ajv": "^8.17.1",
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,148 @@
+name: Sherlock Scan
+
+on:
+  schedule:
+    # Three scans/day at staggered times to sample different time cohorts.
+    # GitHub cron can drift ±15min, which adds natural jitter on top.
+    - cron: '20 3 * * *'   # ~03:20 UTC
+    - cron: '45 11 * * *'  # ~11:45 UTC
+    - cron: '10 19 * * *'  # ~19:10 UTC
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Scan window (e.g. 1h, 24h, 7d)'
+        default: '24h'
+      kinds:
+        description: 'Comma-separated kinds (blank = all defaults)'
+        default: ''
+      jitter:
+        description: 'Max random time jitter (e.g. 6h, 0s to disable)'
+        default: '6h'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Install nak
+        run: go install github.com/fiatjaf/nak@v0.19.0
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build
+        run: npx tsc
+
+      # Restore DB from previous run (if any)
+      - name: Restore database cache
+        uses: actions/cache/restore@v4
+        id: db-cache
+        with:
+          path: sherlock.db
+          key: sherlock-db-${{ github.run_id }}
+          restore-keys: |
+            sherlock-db-
+
+      - name: Scan relays
+        run: |
+          SINCE="${{ github.event.inputs.since || '12h' }}"
+          KINDS="${{ github.event.inputs.kinds }}"
+          JITTER="${{ github.event.inputs.jitter || '6h' }}"
+
+          ARGS="--since $SINCE --jitter $JITTER"
+          if [ -n "$KINDS" ]; then
+            ARGS="$ARGS --kinds $KINDS"
+          fi
+
+          node dist/index.js scan $ARGS
+
+      - name: Generate reports
+        run: |
+          echo "## Stats" > report.md
+          echo '```' >> report.md
+          node dist/index.js stats >> report.md
+          echo '```' >> report.md
+
+          echo "" >> report.md
+          echo "## Violations by Kind" >> report.md
+          echo '```' >> report.md
+          node dist/index.js report --by kind >> report.md
+          echo '```' >> report.md
+
+          echo "" >> report.md
+          echo "## Violations by Client" >> report.md
+          echo '```' >> report.md
+          node dist/index.js report --by client >> report.md
+          echo '```' >> report.md
+
+          echo "" >> report.md
+          echo "## Top Errors" >> report.md
+          echo '```' >> report.md
+          node dist/index.js report --by error --limit 20 >> report.md
+          echo '```' >> report.md
+
+          cat report.md
+
+      - name: Write job summary
+        run: cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Export findings
+        run: node dist/index.js export
+
+      - name: Publish to Nostr (daily only)
+        if: github.event.schedule == '20 3 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          NOSTR_SECRET_KEY: ${{ secrets.NOSTR_SECRET_KEY }}
+        run: |
+          if [ -n "$NOSTR_SECRET_KEY" ]; then
+            node dist/index.js export --publish
+          else
+            echo "NOSTR_SECRET_KEY not configured — skipping publish"
+          fi
+
+      - name: Commit findings
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/findings.json docs/index.html
+          git diff --cached --quiet || git commit -m "update findings $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "Push failed (attempt $i/3), rebasing and retrying..."
+            sleep $((i * 2))
+            git pull --rebase origin main
+          done
+          echo "::error::Failed to push after 3 attempts"
+          exit 1
+
+      # Save DB for next run
+      - name: Save database cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sherlock.db
+          key: sherlock-db-${{ github.run_id }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sherlock-results-${{ github.run_id }}
+          path: |
+            sherlock.db
+            report.md
+          retention-days: 30
