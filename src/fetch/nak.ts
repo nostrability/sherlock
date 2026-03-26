@@ -6,6 +6,7 @@ import {
   DEFAULT_RELAY_PAUSE_MS,
   DEFAULT_BATCH_PAUSE_MS,
   DEFAULT_KIND_BATCH_SIZE,
+  DEFAULT_BATCH_LIMIT,
 } from '../config.js';
 import type { ChildProcess } from 'node:child_process';
 import type { NostrEvent, RateLimitEvent } from '../types.js';
@@ -47,6 +48,8 @@ export interface NakFetchOptions {
   since: number;
   /** Per-kind watermarks — if provided, each batch uses the minimum since across its kinds. */
   perKindSince?: Map<number, number>;
+  /** Max events per nak batch request (passed as --limit to nak). 0 = unlimited. */
+  batchLimit?: number;
   onEvent: (event: NostrEvent, relay: string) => void;
   onError?: (error: string) => void;
   onRateLimit?: (event: RateLimitEvent) => void;
@@ -102,6 +105,7 @@ async function fetchBatchFromRelay(
   relay: string,
   kinds: number[],
   since: number,
+  batchLimit: number,
   onEvent: (event: NostrEvent, relay: string) => void,
   onError?: (error: string) => void,
   onRateLimit?: (event: RateLimitEvent) => void,
@@ -113,6 +117,9 @@ async function fetchBatchFromRelay(
   }
 
   args.push('--since', String(since));
+  if (batchLimit > 0) {
+    args.push('--limit', String(batchLimit));
+  }
   args.push('--paginate');
   args.push('--paginate-interval', DEFAULT_PAGINATE_INTERVAL);
   args.push(relay);
@@ -228,6 +235,7 @@ export async function fetchEvents(opts: NakFetchOptions): Promise<number> {
           relay,
           batch,
           batchSince,
+          opts.batchLimit ?? DEFAULT_BATCH_LIMIT,
           opts.onEvent,
           opts.onError,
           opts.onRateLimit,

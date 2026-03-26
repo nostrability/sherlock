@@ -1,4 +1,4 @@
-import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE, DEFAULT_RELAY_PAUSE_MS } from '../config.js';
+import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE, DEFAULT_RELAY_PAUSE_MS, DEFAULT_BATCH_LIMIT } from '../config.js';
 import { fetchEvents, checkNak } from '../fetch/nak.js';
 import { validateEvent, checkSchemaAvailability, runSemanticChecks, getAvailableKinds } from '../validate/engine.js';
 import { resolveAttribution } from '../attribution/resolve.js';
@@ -14,6 +14,7 @@ interface ScanCommandOptions {
   relays?: string;
   since?: string;
   jitter?: string;
+  batchLimit?: string;
 }
 
 /**
@@ -89,6 +90,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     console.log(`  Events for these kinds will be stored with valid=NULL`);
   }
 
+  const parsedLimit = opts.batchLimit !== undefined ? Number(opts.batchLimit) : NaN;
+  const batchLimit = Number.isInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : DEFAULT_BATCH_LIMIT;
   const sinceDate = new Date(since * 1000).toISOString();
   const numBatches = Math.ceil(kinds.length / DEFAULT_KIND_BATCH_SIZE);
   const estMinutes = Math.ceil((numBatches * 7 + DEFAULT_RELAY_PAUSE_MS / 1000) * relays.length / 60);
@@ -96,6 +99,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log(`  Kinds: ${kinds.join(', ')}`);
   console.log(`  Relays: ${relays.join(', ')} (order randomized)`);
   console.log(`  Since: ${sinceDate} (jitter: -${Math.floor(jitterApplied / 60)}m)`);
+  console.log(`  Batch limit: ${batchLimit > 0 ? formatNumber(batchLimit) + ' events/batch' : 'unlimited'}`);
   if (perKindSince) {
     console.log(`  Using per-kind watermarks (${perKindSince.size} kinds)`);
   }
@@ -133,6 +137,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
       relays,
       since,
       perKindSince,
+      batchLimit,
       onRelayStart: (relay, index, total) => {
         console.log(`  [relay ${index + 1}/${total}] ${relay}`);
       },
