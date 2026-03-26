@@ -22,7 +22,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -118,7 +118,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/findings.json docs/index.html
+          git add data/findings.json data/summary.json docs/index.html
           git diff --cached --quiet || git commit -m "update findings $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           for i in 1 2 3; do
             if git push; then exit 0; fi
