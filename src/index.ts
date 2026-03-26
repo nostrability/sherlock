@@ -22,6 +22,7 @@ program
   .option('--relays <relays>', 'Comma-separated list of relay URLs')
   .option('--since <duration>', 'How far back to scan (e.g., 1h, 24h, 7d)')
   .option('--jitter <duration>', 'Max random offset added to --since for cohort diversity (default: 6h)')
+  .option('--batch-limit <n>', 'Max events per nak batch request (default: 5000, 0 = unlimited)')
   .action(async (opts) => {
     if (opts.kinds && opts.allSchemas) {
       console.error('Error: --kinds and --all-schemas are mutually exclusive.');
