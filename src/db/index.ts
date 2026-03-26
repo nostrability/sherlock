@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 import { DB_FILENAME } from '../config.js';
-import type { NostrEvent, ValidationResult, ClientAttribution } from '../types.js';
+import type { NostrEvent, ValidationResult, ClientAttribution, Attribution, ScanRun } from '../types.js';
 
 const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS events (
@@ -27,11 +27,43 @@ CREATE TABLE IF NOT EXISTS violations (
   severity      TEXT NOT NULL DEFAULT 'error'
 );
 
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at     INTEGER NOT NULL DEFAULT (unixepoch()),
+  finished_at    INTEGER,
+  kinds          TEXT,
+  relays         TEXT,
+  since_ts       INTEGER,
+  events_fetched INTEGER DEFAULT 0,
+  events_new     INTEGER DEFAULT 0,
+  violations_found INTEGER DEFAULT 0,
+  ci_run_id      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
 CREATE INDEX IF NOT EXISTS idx_events_valid ON events(valid);
 CREATE INDEX IF NOT EXISTS idx_events_client ON events(client_name);
 CREATE INDEX IF NOT EXISTS idx_violations_event ON violations(event_id);
 `;
+
+/** Idempotent migrations: add columns that may not exist yet */
+function runMigrations(db: Database.Database): void {
+  const eventCols = db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>;
+  const colNames = new Set(eventCols.map(c => c.name));
+
+  if (!colNames.has('scan_run_id')) {
+    db.exec('ALTER TABLE events ADD COLUMN scan_run_id INTEGER REFERENCES scan_runs(id)');
+  }
+  if (!colNames.has('attribution_method')) {
+    db.exec('ALTER TABLE events ADD COLUMN attribution_method TEXT');
+  }
+  if (!colNames.has('attribution_confidence')) {
+    db.exec('ALTER TABLE events ADD COLUMN attribution_confidence TEXT');
+  }
+
+  // Create indexes on migrated columns (safe to run idempotently)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_scan_run ON events(scan_run_id)');
+}
 
 let db: Database.Database | null = null;
 
@@ -42,6 +74,7 @@ export function getDb(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA_DDL);
+  runMigrations(db);
   return db;
 }
 
@@ -55,8 +88,8 @@ export function closeDb(): void {
 }
 
 const insertEventStmt = () => getDb().prepare(`
-  INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, tags, raw, client_name, source_relay, valid)
-  VALUES (@id, @pubkey, @kind, @created_at, @tags, @raw, @client_name, @source_relay, @valid)
+  INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, tags, raw, client_name, source_relay, valid, scan_run_id, attribution_method, attribution_confidence)
+  VALUES (@id, @pubkey, @kind, @created_at, @tags, @raw, @client_name, @source_relay, @valid, @scan_run_id, @attribution_method, @attribution_confidence)
 `);
 
 const insertViolationStmt = () => getDb().prepare(`
@@ -86,6 +119,8 @@ export function storeEvent(
   validation: ValidationResult,
   client: ClientAttribution | null,
   sourceRelay?: string,
+  scanRunId?: number,
+  attribution?: Attribution | null,
 ): boolean {
   const raw = JSON.stringify(event);
   const validValue = validation.valid === null ? null : validation.valid ? 1 : 0;
@@ -98,9 +133,12 @@ export function storeEvent(
       created_at: event.created_at,
       tags: JSON.stringify(event.tags),
       raw,
-      client_name: client?.name ?? null,
+      client_name: attribution?.name ?? client?.name ?? null,
       source_relay: sourceRelay ?? null,
       valid: validValue,
+      scan_run_id: scanRunId ?? null,
+      attribution_method: attribution?.method ?? (client ? 'client_tag' : null),
+      attribution_confidence: attribution?.confidence ?? (client ? 'high' : null),
     });
 
     if (result.changes === 0) return false; // duplicate
@@ -231,8 +269,6 @@ export function getViolationDetails(): Array<{
           AND e2.kind = base.kind
           AND v2.error_keyword IS base.error_keyword
           AND v2.error_path IS base.error_path
-          AND v2.error_message = base.error_message
-        ORDER BY e2.created_at DESC, e2.id
         LIMIT 3
       )
     ) as sample_event_ids
@@ -251,15 +287,15 @@ export function getViolationDetails(): Array<{
 }
 
 export function getTopPubkeysForErrors(): Array<{
-  error_keyword: string | null; error_path: string | null; error_message: string; pubkey: string; cnt: number;
+  error_keyword: string | null; error_path: string | null; pubkey: string; cnt: number;
 }> {
   return getDb().prepare(`
-    SELECT v.error_keyword, v.error_path, v.error_message, e.pubkey, COUNT(*) as cnt
+    SELECT v.error_keyword, v.error_path, e.pubkey, COUNT(*) as cnt
     FROM violations v JOIN events e ON e.id = v.event_id
-    GROUP BY 1, 2, 3, 4
-    ORDER BY 1, 2, 3, cnt DESC
+    GROUP BY 1, 2, 3
+    ORDER BY 1, 2, cnt DESC
   `).all() as Array<{
-    error_keyword: string | null; error_path: string | null; error_message: string; pubkey: string; cnt: number;
+    error_keyword: string | null; error_path: string | null; pubkey: string; cnt: number;
   }>;
 }
 
@@ -274,4 +310,175 @@ export function getDistinctRelays(): string[] {
     'SELECT DISTINCT source_relay FROM events WHERE source_relay IS NOT NULL ORDER BY source_relay'
   ).all() as Array<{ source_relay: string }>;
   return rows.map(r => r.source_relay);
+}
+
+// --- Scan run tracking ---
+
+export function createScanRun(kinds: number[], relays: string[], sinceTs: number): number {
+  const result = getDb().prepare(`
+    INSERT INTO scan_runs (kinds, relays, since_ts, ci_run_id)
+    VALUES (?, ?, ?, ?)
+  `).run(
+    JSON.stringify(kinds),
+    JSON.stringify(relays),
+    sinceTs,
+    process.env.GITHUB_RUN_ID ?? null,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function finishScanRun(id: number, stats: { events_fetched: number; events_new: number; violations_found: number }): void {
+  getDb().prepare(`
+    UPDATE scan_runs
+    SET finished_at = unixepoch(),
+        events_fetched = ?,
+        events_new = ?,
+        violations_found = ?
+    WHERE id = ?
+  `).run(stats.events_fetched, stats.events_new, stats.violations_found, id);
+}
+
+export function getScanRunHistory(limit: number = 20): ScanRun[] {
+  return getDb().prepare(`
+    SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?
+  `).all(limit) as ScanRun[];
+}
+
+// --- Phase 3: Drill-down queries ---
+
+export function getSampleEvents(kind: number, clientName?: string, errorKeyword?: string, limit: number = 3): Array<{
+  id: string; pubkey: string; kind: number; created_at: number; raw: string; client_name: string | null;
+  attribution_method: string | null; attribution_confidence: string | null;
+}> {
+  let query = `
+    SELECT e.id, e.pubkey, e.kind, e.created_at, e.raw, e.client_name,
+           e.attribution_method, e.attribution_confidence
+    FROM events e
+  `;
+  const params: unknown[] = [];
+
+  if (errorKeyword) {
+    query += ' JOIN violations v ON v.event_id = e.id';
+  }
+  query += ' WHERE e.kind = ?';
+  params.push(kind);
+
+  if (clientName === '_unattributed') {
+    query += ' AND e.client_name IS NULL';
+  } else if (clientName) {
+    query += ' AND e.client_name = ?';
+    params.push(clientName);
+  }
+  if (errorKeyword) {
+    query += ' AND v.error_keyword = ?';
+    params.push(errorKeyword);
+  }
+  query += ' ORDER BY e.created_at DESC LIMIT ?';
+  params.push(limit);
+
+  return getDb().prepare(query).all(...params) as Array<{
+    id: string; pubkey: string; kind: number; created_at: number; raw: string; client_name: string | null;
+    attribution_method: string | null; attribution_confidence: string | null;
+  }>;
+}
+
+export function getTagFrequency(kind: number, clientName?: string): Array<{ tag_name: string; count: number }> {
+  // Parse tags in JS since SQLite JSON can be tricky with nested arrays
+  const params: unknown[] = [kind];
+  if (clientName && clientName !== '_unattributed') params.push(clientName);
+
+  const rows = getDb().prepare(`
+    SELECT e.tags FROM events e WHERE e.kind = ?
+    ${clientName === '_unattributed' ? 'AND e.client_name IS NULL' : clientName ? 'AND e.client_name = ?' : ''}
+    LIMIT 1000
+  `).all(...params) as Array<{ tags: string }>;
+
+  const freqMap = new Map<string, number>();
+  for (const row of rows) {
+    try {
+      const tags = JSON.parse(row.tags) as string[][];
+      for (const tag of tags) {
+        if (tag[0]) {
+          freqMap.set(tag[0], (freqMap.get(tag[0]) ?? 0) + 1);
+        }
+      }
+    } catch { /* skip malformed */ }
+  }
+
+  return [...freqMap.entries()]
+    .map(([tag_name, count]) => ({ tag_name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
+}
+
+export function getPubkeyDistribution(): Array<{ client_name: string; kind: number; unique_pubkeys: number }> {
+  return getDb().prepare(`
+    SELECT COALESCE(client_name, '_unattributed') as client_name, kind,
+           COUNT(DISTINCT pubkey) as unique_pubkeys
+    FROM events
+    GROUP BY 1, 2
+    ORDER BY unique_pubkeys DESC
+  `).all() as Array<{ client_name: string; kind: number; unique_pubkeys: number }>;
+}
+
+export function getAttributionSummary(): Array<{ method: string; count: number }> {
+  return getDb().prepare(`
+    SELECT COALESCE(attribution_method, 'unattributed') as method, COUNT(*) as count
+    FROM events
+    GROUP BY 1
+    ORDER BY count DESC
+  `).all() as Array<{ method: string; count: number }>;
+}
+
+// --- Phase 4: Trend queries ---
+
+export function getAppTrend(clientName: string, groupBy: 'day' | 'week' = 'day'): Array<{
+  period: string; total: number; invalid: number; error_rate: number;
+}> {
+  const dateFmt = groupBy === 'week' ? '%Y-W%W' : '%Y-%m-%d';
+  const client = clientName === '_unattributed' ? null : clientName;
+
+  return getDb().prepare(`
+    SELECT strftime('${dateFmt}', e.created_at, 'unixepoch') as period,
+           COUNT(*) as total,
+           SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) as invalid,
+           CASE WHEN SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END) > 0
+             THEN ROUND(CAST(SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) AS REAL)
+               / SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END), 4)
+             ELSE 0
+           END as error_rate
+    FROM events e
+    WHERE ${client === null ? 'e.client_name IS NULL' : 'e.client_name = ?'}
+    GROUP BY period
+    ORDER BY period
+  `).all(...(client === null ? [] : [client])) as Array<{
+    period: string; total: number; invalid: number; error_rate: number;
+  }>;
+}
+
+export function getAllAppTrends(lastNDays: number = 30): Array<{
+  client_name: string; total: number; invalid: number; error_rate: number;
+  first_seen: string; last_seen: string; data_points: number;
+}> {
+  const cutoff = Math.floor(Date.now() / 1000) - lastNDays * 86400;
+  return getDb().prepare(`
+    SELECT COALESCE(e.client_name, '_unattributed') as client_name,
+           COUNT(*) as total,
+           SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) as invalid,
+           CASE WHEN SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END) > 0
+             THEN ROUND(CAST(SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) AS REAL)
+               / SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END), 4)
+             ELSE 0
+           END as error_rate,
+           strftime('%Y-%m-%d', MIN(e.created_at), 'unixepoch') as first_seen,
+           strftime('%Y-%m-%d', MAX(e.created_at), 'unixepoch') as last_seen,
+           COUNT(DISTINCT strftime('%Y-%m-%d', e.created_at, 'unixepoch')) as data_points
+    FROM events e
+    WHERE e.created_at >= ?
+    GROUP BY 1
+    ORDER BY total DESC
+  `).all(cutoff) as Array<{
+    client_name: string; total: number; invalid: number; error_rate: number;
+    first_seen: string; last_seen: string; data_points: number;
+  }>;
 }
