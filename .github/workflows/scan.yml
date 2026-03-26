@@ -64,6 +64,8 @@ jobs:
           ARGS="--since $SINCE --jitter $JITTER"
           if [ -n "$KINDS" ]; then
             ARGS="$ARGS --kinds $KINDS"
+          else
+            ARGS="$ARGS --all-schemas"
           fi
 
           node dist/index.js scan $ARGS
