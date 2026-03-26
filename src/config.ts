@@ -35,7 +35,10 @@ export const DEFAULT_PAGINATE_INTERVAL = '5s';   // pause between paginated page
 export const DEFAULT_RELAY_PAUSE_MS = 3000;       // pause between sequential relay scans
 export const DEFAULT_BATCH_PAUSE_MS = 2000;       // pause between kind batches on same relay
 export const DEFAULT_KIND_BATCH_SIZE = 5;         // max kinds per REQ filter
-export const DEFAULT_BATCH_LIMIT = 5000;          // max events per nak batch (0 = unlimited)
+export const DEFAULT_BATCH_LIMIT = 2500;          // max events per nak batch (0 = unlimited)
+
+// High-volume kinds that get their own solo batch to avoid starving other kinds
+export const HIGH_VOLUME_KINDS = [1];
 
 export const DB_FILENAME = 'sherlock.db';
 

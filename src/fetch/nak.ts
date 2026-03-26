@@ -7,6 +7,7 @@ import {
   DEFAULT_BATCH_PAUSE_MS,
   DEFAULT_KIND_BATCH_SIZE,
   DEFAULT_BATCH_LIMIT,
+  HIGH_VOLUME_KINDS,
 } from '../config.js';
 import type { ChildProcess } from 'node:child_process';
 import type { NostrEvent, RateLimitEvent } from '../types.js';
@@ -199,8 +200,14 @@ export async function fetchEvents(opts: NakFetchOptions): Promise<number> {
   // Shuffle relay order so we don't always hit the same one first
   const relays = shuffle([...opts.relays]);
 
-  // Shuffle kind batches for sampling diversity
-  const kindBatches = shuffle(chunk([...opts.kinds], DEFAULT_KIND_BATCH_SIZE));
+  // Separate high-volume kinds into solo batches so they don't starve others
+  const highVolume = new Set(HIGH_VOLUME_KINDS);
+  const soloKinds = opts.kinds.filter(k => highVolume.has(k));
+  const normalKinds = opts.kinds.filter(k => !highVolume.has(k));
+  const kindBatches = shuffle([
+    ...soloKinds.map(k => [k]),
+    ...chunk(normalKinds, DEFAULT_KIND_BATCH_SIZE),
+  ]);
 
   let totalCount = 0;
 
