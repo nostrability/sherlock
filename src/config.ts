@@ -38,7 +38,8 @@ export const DEFAULT_KIND_BATCH_SIZE = 5;         // max kinds per REQ filter
 export const DEFAULT_BATCH_LIMIT = 2500;          // max events per nak batch (0 = unlimited)
 
 // High-volume kinds that get their own solo batch to avoid starving other kinds
-export const HIGH_VOLUME_KINDS = [1];
+// Based on observed volumes: 1059 (48k), 1 (36k), 10002 (25k), 7 (21k)
+export const HIGH_VOLUME_KINDS = [1, 1059, 10002, 7];
 
 export const DB_FILENAME = 'sherlock.db';
 
