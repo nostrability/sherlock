@@ -1,4 +1,4 @@
-import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE } from '../config.js';
+import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE, DEFAULT_RELAY_PAUSE_MS } from '../config.js';
 import { fetchEvents, checkNak } from '../fetch/nak.js';
 import { validateEvent, checkSchemaAvailability, runSemanticChecks, getAvailableKinds } from '../validate/engine.js';
 import { resolveAttribution } from '../attribution/resolve.js';
@@ -91,7 +91,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
 
   const sinceDate = new Date(since * 1000).toISOString();
   const numBatches = Math.ceil(kinds.length / DEFAULT_KIND_BATCH_SIZE);
-  const estMinutes = Math.ceil(numBatches * relays.length * 7 / 60); // ~7s per batch (5s paginate + 2s pause)
+  const estMinutes = Math.ceil((numBatches * 7 + DEFAULT_RELAY_PAUSE_MS / 1000) * relays.length / 60);
   console.log(`\nScanning ${kinds.length} kinds in ${numBatches} batches from ${relays.length} relays (~${estMinutes}min)`);
   console.log(`  Kinds: ${kinds.join(', ')}`);
   console.log(`  Relays: ${relays.join(', ')} (order randomized)`);
