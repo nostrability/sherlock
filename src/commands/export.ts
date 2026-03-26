@@ -487,10 +487,15 @@ function copyText(text) { navigator.clipboard.writeText(text); }
     var d = Math.floor(h / 24);
     return d + 'd ago';
   }
+  var validated = c.total_valid + c.total_invalid;
+  var errorRateNum = validated > 0 ? (c.total_invalid / validated * 100) : 0;
+  var errorRate = errorRateNum.toFixed(1);
+  var erColor = errorRateNum === 0 ? '#58d68d' : errorRateNum <= 5 ? '#f4d03f' : '#e74c3c';
   document.getElementById('coverage').innerHTML = [
     stat('Events', c.total_events.toLocaleString()),
     stat('Valid', c.total_valid.toLocaleString()),
     stat('Invalid', c.total_invalid.toLocaleString()),
+    stat('Error Rate', '<span style="color:' + erColor + '">' + errorRate + '%</span>'),
     stat('No Schema', c.total_no_schema.toLocaleString()),
     stat('Kinds', c.kinds_scanned.length),
     stat('Relays', c.relays.length),
