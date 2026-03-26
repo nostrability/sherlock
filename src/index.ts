@@ -17,11 +17,16 @@ program
 program
   .command('scan')
   .description('Fetch and validate events from relays')
-  .option('--kinds <kinds>', 'Comma-separated list of kinds to scan (default: 0,3,10002,30023,14,15,10050,13,1059,13194,23194,23195,23196,23197,9734,9735)')
+  .option('--kinds <kinds>', 'Comma-separated list of kinds to scan (default: 16 priority kinds)')
+  .option('--all-schemas', 'Scan all kinds that have a schemata schema')
   .option('--relays <relays>', 'Comma-separated list of relay URLs')
   .option('--since <duration>', 'How far back to scan (e.g., 1h, 24h, 7d)')
   .option('--jitter <duration>', 'Max random offset added to --since for cohort diversity (default: 6h)')
   .action(async (opts) => {
+    if (opts.kinds && opts.allSchemas) {
+      console.error('Error: --kinds and --all-schemas are mutually exclusive.');
+      process.exit(1);
+    }
     try {
       await scanCommand(opts);
     } catch (err) {

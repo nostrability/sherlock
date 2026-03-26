@@ -1,6 +1,6 @@
-import { DEFAULT_RELAYS, DEFAULT_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE } from '../config.js';
+import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE } from '../config.js';
 import { fetchEvents, checkNak } from '../fetch/nak.js';
-import { validateEvent, checkSchemaAvailability, runSemanticChecks } from '../validate/engine.js';
+import { validateEvent, checkSchemaAvailability, runSemanticChecks, getAvailableKinds } from '../validate/engine.js';
 import { resolveAttribution } from '../attribution/resolve.js';
 import { fetchNip89Handlers } from '../attribution/nip89.js';
 import { loadFingerprints } from '../attribution/fingerprints.js';
@@ -10,6 +10,7 @@ import type { RateLimitEvent } from '../types.js';
 
 interface ScanCommandOptions {
   kinds?: string;
+  allSchemas?: boolean;
   relays?: string;
   since?: string;
   jitter?: string;
@@ -36,10 +37,16 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   }
   console.log(`Using nak: ${nakPath}`);
 
-  // Parse kinds
-  const kinds = opts.kinds
-    ? opts.kinds.split(',').map(k => parseInt(k.trim(), 10)).filter(k => !isNaN(k))
-    : DEFAULT_KINDS;
+  // Resolve kinds: --kinds CSV > --all-schemas > default priority kinds
+  const allAvailable = getAvailableKinds();
+  let kinds: number[];
+  if (opts.kinds) {
+    kinds = opts.kinds.split(',').map(k => parseInt(k.trim(), 10)).filter(k => !isNaN(k));
+  } else if (opts.allSchemas) {
+    kinds = allAvailable;
+  } else {
+    kinds = PRIORITY_KINDS;
+  }
 
   // Parse relays
   const relays = opts.relays
@@ -75,7 +82,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
 
   // Check schema availability
   const { available, missing } = checkSchemaAvailability(kinds);
-  console.log(`\nSchema coverage: ${available.length}/${kinds.length} kinds`);
+  console.log(`\nAvailable schemas: ${allAvailable.length} | Scanning: ${kinds.length} kinds`);
+  console.log(`  Schema coverage: ${available.length}/${kinds.length} kinds`);
   if (missing.length > 0) {
     console.log(`  Missing schemas: ${missing.join(', ')}`);
     console.log(`  Events for these kinds will be stored with valid=NULL`);
@@ -83,7 +91,8 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
 
   const sinceDate = new Date(since * 1000).toISOString();
   const numBatches = Math.ceil(kinds.length / DEFAULT_KIND_BATCH_SIZE);
-  console.log(`\nScanning ${kinds.length} kinds in ${numBatches} batches from ${relays.length} relays`);
+  const estMinutes = Math.ceil(numBatches * relays.length * 7 / 60); // ~7s per batch (5s paginate + 2s pause)
+  console.log(`\nScanning ${kinds.length} kinds in ${numBatches} batches from ${relays.length} relays (~${estMinutes}min)`);
   console.log(`  Kinds: ${kinds.join(', ')}`);
   console.log(`  Relays: ${relays.join(', ')} (order randomized)`);
   console.log(`  Since: ${sinceDate} (jitter: -${Math.floor(jitterApplied / 60)}m)`);

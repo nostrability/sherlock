@@ -18,7 +18,7 @@ import {
   getAppTrend,
   getAllAppTrends,
 } from '../db/index.js';
-import { KIND_NAMES, STATUS_THRESHOLDS, GITHUB_REPO, DEFAULT_KINDS } from '../config.js';
+import { getKindNames, STATUS_THRESHOLDS, GITHUB_REPO } from '../config.js';
 import { which } from '../util.js';
 
 // --- Types ---
@@ -121,6 +121,7 @@ function computeTrendDirection(dataPoints: TrendDataPoint[]): AppTrend['directio
 
 function buildFindings(): Findings {
   getDb(); // ensure initialized
+  const kindNames = getKindNames();
 
   const total = getTotalEvents();
   const byKind = getEventCountsByKind();
@@ -211,7 +212,7 @@ function buildFindings(): Findings {
     const kindPubkeys = kindPubkeyMap.get(r.kind) ?? 0;
 
     findingsByKind[String(r.kind)] = {
-      name: KIND_NAMES[r.kind] ?? `Kind ${r.kind}`,
+      name: kindNames[r.kind] ?? `Kind ${r.kind}`,
       schema_key: `kind${r.kind}Schema`,
       total: r.total, valid: r.valid, invalid: r.invalid,
       error_rate: Math.round(errorRate * 10000) / 10000,
@@ -429,7 +430,7 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 <script>
 var FINDINGS = ${data};
 
-var KIND_NAMES = ${JSON.stringify(KIND_NAMES)};
+var KIND_NAMES = ${JSON.stringify(getKindNames())};
 
 function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
 function pct(n, t) { return t > 0 ? (n/t*100).toFixed(1) + '%' : '0.0%'; }

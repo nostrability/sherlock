@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 
 // Load all schemas from the schemata package via require (avoids Node 22+ ESM JSON import issue)
 let schemas: Record<string, unknown> | null = null;
+let kindNipMap: Map<number, string> | null = null;
 
 function loadSchemas(): Record<string, unknown> {
   if (schemas) return schemas;
@@ -18,6 +19,7 @@ function loadSchemas(): Record<string, unknown> {
   const pkgDir = path.dirname(schemataDir);
 
   schemas = {};
+  kindNipMap = new Map();
   const nipsDir = path.join(pkgDir, 'dist', 'nips');
   if (!fs.existsSync(nipsDir)) {
     console.error(`Warning: schemata nips directory not found at ${nipsDir}`);
@@ -38,12 +40,31 @@ function loadSchemas(): Record<string, unknown> {
         if (fs.existsSync(schemaPath)) {
           const key = `kind${kindNum}Schema`;
           schemas[key] = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+          // Map kind number to NIP directory name (e.g., "nip-25" → "NIP-25")
+          const nipLabel = nipDir.replace(/^nip-/, 'NIP-');
+          kindNipMap!.set(Number(kindNum), nipLabel);
         }
       }
     }
   }
 
   return schemas;
+}
+
+/**
+ * Get all kind numbers that have a schemata schema.
+ */
+export function getAvailableKinds(): number[] {
+  loadSchemas();
+  return [...kindNipMap!.keys()].sort((a, b) => a - b);
+}
+
+/**
+ * Get mapping of kind number → NIP label (e.g., 7 → "NIP-25").
+ */
+export function getKindNipMap(): Map<number, string> {
+  loadSchemas();
+  return new Map(kindNipMap!);
 }
 
 const ajv = new Ajv({ strict: false, allErrors: true });
