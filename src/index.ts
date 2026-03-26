@@ -35,7 +35,7 @@ program
 program
   .command('report')
   .description('Show violation reports')
-  .option('--by <grouping>', 'Group by: kind, client, error, recent (default: kind)')
+  .option('--by <grouping>', 'Group by: kind, client, error, recent, trend (default: kind)')
   .option('--format <format>', 'Output format: table, json, csv (default: table)')
   .option('--limit <n>', 'Limit number of results')
   .action((opts) => {

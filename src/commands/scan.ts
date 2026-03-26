@@ -1,8 +1,10 @@
 import { DEFAULT_RELAYS, DEFAULT_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE } from '../config.js';
 import { fetchEvents, checkNak } from '../fetch/nak.js';
-import { validateEvent, checkSchemaAvailability } from '../validate/engine.js';
-import { extractClientTag } from '../attribution/client-tag.js';
-import { storeEvent, getHighWaterMark, getDb } from '../db/index.js';
+import { validateEvent, checkSchemaAvailability, runSemanticChecks } from '../validate/engine.js';
+import { resolveAttribution } from '../attribution/resolve.js';
+import { fetchNip89Handlers } from '../attribution/nip89.js';
+import { loadFingerprints } from '../attribution/fingerprints.js';
+import { storeEvent, getHighWaterMark, getDb, createScanRun, finishScanRun } from '../db/index.js';
 import { parseDuration, formatNumber } from '../util.js';
 import type { RateLimitEvent } from '../types.js';
 
@@ -44,27 +46,24 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     ? opts.relays.split(',').map(r => r.trim()).filter(Boolean)
     : DEFAULT_RELAYS;
 
-  // Determine since timestamp.
-  // When no --since is given, use per-kind high-water marks so that each kind
-  // resumes from its own last-seen timestamp. This prevents a kind with recent
-  // activity from advancing the watermark past kinds that haven't been scanned.
+  // Determine since timestamp + per-kind watermarks
   let since: number;
-  let perKindSince: Map<number, number> | null = null;
+  let perKindSince: Map<number, number> | undefined;
   if (opts.since) {
     const duration = parseDuration(opts.since);
     since = Math.floor(Date.now() / 1000) - duration;
   } else {
+    // Use per-kind high water marks so frequent kinds don't starve rare ones
     const fallback = Math.floor(Date.now() / 1000) - DEFAULT_SCAN_WINDOW_SECONDS;
-    const kindTimestamps = new Map<number, number>();
+    perKindSince = new Map();
     let minSince = Infinity;
     for (const kind of kinds) {
       const hwm = getHighWaterMark(kind);
       const ts = hwm ?? fallback;
-      kindTimestamps.set(kind, ts);
+      perKindSince.set(kind, ts);
       if (ts < minSince) minSince = ts;
     }
     since = minSince === Infinity ? fallback : minSince;
-    perKindSince = kindTimestamps;
   }
 
   // Apply time jitter: randomly look further back by up to 6 hours
@@ -88,14 +87,16 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log(`  Kinds: ${kinds.join(', ')}`);
   console.log(`  Relays: ${relays.join(', ')} (order randomized)`);
   console.log(`  Since: ${sinceDate} (jitter: -${Math.floor(jitterApplied / 60)}m)`);
+  if (perKindSince) {
+    console.log(`  Using per-kind watermarks (${perKindSince.size} kinds)`);
+  }
   console.log('');
 
   const progress = {
     fetched: 0,
     duplicates: 0,
     newEvents: 0,
-    invalidEvents: 0,
-    violationErrors: 0,
+    violations: 0,
     rateLimits: 0,
   };
   const rateLimitEvents: RateLimitEvent[] = [];
@@ -103,63 +104,98 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   // Ensure DB is initialized
   getDb();
 
+  // Create scan run
+  const scanRunId = createScanRun(kinds, relays, since);
+  console.log(`  Scan run #${scanRunId}`);
+
   const startTime = Date.now();
 
-  await fetchEvents({
-    kinds,
-    relays,
-    since,
-    perKindSince: perKindSince ?? undefined,
-    onRelayStart: (relay, index, total) => {
-      console.log(`  [relay ${index + 1}/${total}] ${relay}`);
-    },
-    onRelayDone: (relay, count) => {
-      console.log(`  [done] ${relay}: ${formatNumber(count)} events\n`);
-    },
-    onBatchStart: (_relay, batchKinds, batchIndex, totalBatches) => {
-      console.log(`    batch ${batchIndex + 1}/${totalBatches}: kinds [${batchKinds.join(', ')}]`);
-    },
-    onRateLimit: (event) => {
-      progress.rateLimits++;
-      rateLimitEvents.push(event);
-      console.error(`    !! RATE LIMITED by ${event.relay}: ${event.reason}`);
-    },
-    onEvent: (event, relay) => {
-      progress.fetched++;
+  try {
+    // Load attribution data
+    console.log('  Loading attribution data...');
+    const nip89Map = await fetchNip89Handlers(relays);
+    console.log(`  NIP-89 handlers: ${nip89Map.size} pubkeys mapped`);
+    const fingerprints = loadFingerprints();
+    console.log(`  Fingerprints: ${fingerprints.length} app patterns loaded`);
+    console.log('');
 
-      const validation = validateEvent(event);
-      const client = extractClientTag(event.tags);
-      const isNew = storeEvent(event, validation, client, relay);
+    await fetchEvents({
+      kinds,
+      relays,
+      since,
+      perKindSince,
+      onRelayStart: (relay, index, total) => {
+        console.log(`  [relay ${index + 1}/${total}] ${relay}`);
+      },
+      onRelayDone: (relay, count) => {
+        console.log(`  [done] ${relay}: ${formatNumber(count)} events\n`);
+      },
+      onBatchStart: (_relay, batchKinds, batchIndex, totalBatches) => {
+        console.log(`    batch ${batchIndex + 1}/${totalBatches}: kinds [${batchKinds.join(', ')}]`);
+      },
+      onRateLimit: (event) => {
+        progress.rateLimits++;
+        rateLimitEvents.push(event);
+        console.error(`    !! RATE LIMITED by ${event.relay}: ${event.reason}`);
+      },
+      onEvent: (event, relay) => {
+        progress.fetched++;
 
-      if (!isNew) {
-        progress.duplicates++;
-      } else {
-        progress.newEvents++;
-        if (validation.valid === false) {
-          progress.invalidEvents++;
-          progress.violationErrors += validation.errors.length;
+        const validation = validateEvent(event);
+        const semanticIssues = runSemanticChecks(event);
+
+        // Add semantic violations to validation errors for storage
+        for (const issue of semanticIssues) {
+          validation.errors.push({
+            instancePath: issue.path,
+            schemaPath: '',
+            keyword: issue.check_name,
+            params: { severity: issue.severity },
+            message: issue.message,
+          });
+          if (validation.valid !== false && issue.severity === 'error') {
+            validation.valid = false;
+          }
         }
-      }
 
-      if (progress.fetched % 500 === 0) {
-        process.stdout.write(`\r    ${formatNumber(progress.fetched)} events processed...`);
-      }
-    },
-    onError: (error) => {
-      console.error(`\n  Warning: ${error}`);
-    },
-  });
+        const attribution = resolveAttribution(event, nip89Map, fingerprints);
+        const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution);
+
+        if (!isNew) {
+          progress.duplicates++;
+        } else {
+          progress.newEvents++;
+          if (validation.errors.length > 0) {
+            progress.violations += validation.errors.length;
+          }
+        }
+
+        if (progress.fetched % 500 === 0) {
+          process.stdout.write(`\r    ${formatNumber(progress.fetched)} events processed...`);
+        }
+      },
+      onError: (error) => {
+        console.error(`\n  Warning: ${error}`);
+      },
+    });
+  } finally {
+    // Always finalize scan run, even on error
+    finishScanRun(scanRunId, {
+      events_fetched: progress.fetched,
+      events_new: progress.newEvents,
+      violations_found: progress.violations,
+    });
+  }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log('');
-  console.log(`Finished in ${elapsed}s`);
+  console.log(`Finished in ${elapsed}s (scan run #${scanRunId})`);
   console.log('');
   console.log('Results:');
   console.log(`  Total fetched:  ${formatNumber(progress.fetched)}`);
   console.log(`  New events:     ${formatNumber(progress.newEvents)}`);
   console.log(`  Duplicates:     ${formatNumber(progress.duplicates)}`);
-  console.log(`  Invalid events: ${formatNumber(progress.invalidEvents)}`);
-  console.log(`  Violation errs: ${formatNumber(progress.violationErrors)}`);
+  console.log(`  Violations:     ${formatNumber(progress.violations)}`);
 
   if (progress.rateLimits > 0) {
     console.log('');

@@ -1,0 +1,44 @@
+[
+  {
+    "app_name": "Damus",
+    "tag_pattern": [
+      { "tag": "client", "value": "damus" }
+    ]
+  },
+  {
+    "app_name": "Primal",
+    "content_pattern": [
+      "primal.net"
+    ]
+  },
+  {
+    "app_name": "Amethyst",
+    "tag_pattern": [
+      { "tag": "client", "value": "amethyst" }
+    ]
+  },
+  {
+    "app_name": "Snort",
+    "content_pattern": [
+      "snort.social"
+    ]
+  },
+  {
+    "app_name": "Coracle",
+    "content_pattern": [
+      "coracle.social"
+    ]
+  },
+  {
+    "app_name": "Nostrudel",
+    "content_pattern": [
+      "nostrudel.ninja"
+    ]
+  },
+  {
+    "app_name": "Gossip",
+    "tag_pattern": [
+      { "tag": "client", "value": "gossip" }
+    ]
+  }
+]

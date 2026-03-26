@@ -62,3 +62,37 @@ export interface RateLimitEvent {
   relay: string;
   reason: string;
 }
+
+export interface ScanRun {
+  id: number;
+  started_at: number;
+  finished_at: number | null;
+  kinds: string | null;       // JSON array
+  relays: string | null;      // JSON array
+  since_ts: number | null;
+  events_fetched: number;
+  events_new: number;
+  violations_found: number;
+  ci_run_id: string | null;
+}
+
+export interface Attribution {
+  name: string;
+  method: 'client_tag' | 'nip89_pubkey' | 'fingerprint';
+  confidence: 'high' | 'medium' | 'low';
+  address?: string;
+}
+
+export interface AppFingerprint {
+  app_name: string;
+  pubkey_prefix?: string[];
+  tag_pattern?: { tag: string; value?: string }[];
+  content_pattern?: string[];
+}
+
+export interface SemanticViolation {
+  check_name: string;
+  message: string;
+  path: string;
+  severity: 'warning' | 'error';
+}
