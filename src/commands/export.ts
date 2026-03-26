@@ -17,6 +17,7 @@ import {
   getSampleEvents,
   getAppTrend,
   getAllAppTrends,
+  getScanRunStats,
 } from '../db/index.js';
 import { getKindNames, STATUS_THRESHOLDS, GITHUB_REPO } from '../config.js';
 import { which } from '../util.js';
@@ -73,6 +74,7 @@ interface Findings {
     kinds_scanned: number[];
     relays: string[];
     first_event_at: string | null; last_event_at: string | null;
+    last_scan_at: string | null; total_scan_runs: number;
   };
   attribution_summary: Record<string, number>;
   by_kind: Record<string, KindFindings>;
@@ -122,6 +124,7 @@ function computeTrendDirection(dataPoints: TrendDataPoint[]): AppTrend['directio
 function buildFindings(): Findings {
   getDb(); // ensure initialized
   const kindNames = getKindNames();
+  const scanStats = getScanRunStats();
 
   const total = getTotalEvents();
   const byKind = getEventCountsByKind();
@@ -331,6 +334,8 @@ function buildFindings(): Findings {
       relays,
       first_event_at: ts(timeRange.first_at),
       last_event_at: ts(timeRange.last_at),
+      last_scan_at: ts(scanStats.last_finished_at),
+      total_scan_runs: scanStats.total_runs,
     },
     attribution_summary: attributionSummary,
     by_kind: findingsByKind,
@@ -470,6 +475,18 @@ function copyText(text) { navigator.clipboard.writeText(text); }
   var a = FINDINGS.attribution_summary || {};
   var attrParts = Object.keys(a).filter(function(k){return k!=='unattributed'}).map(function(k){return k + ': ' + a[k]});
   var attrText = attrParts.length ? attrParts.join(', ') : 'none';
+  function relTime(iso) {
+    if (!iso) return 'never';
+    var ms = Date.now() - new Date(iso).getTime();
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's ago';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + 'h ago';
+    var d = Math.floor(h / 24);
+    return d + 'd ago';
+  }
   document.getElementById('coverage').innerHTML = [
     stat('Events', c.total_events.toLocaleString()),
     stat('Valid', c.total_valid.toLocaleString()),
@@ -477,6 +494,8 @@ function copyText(text) { navigator.clipboard.writeText(text); }
     stat('No Schema', c.total_no_schema.toLocaleString()),
     stat('Kinds', c.kinds_scanned.length),
     stat('Relays', c.relays.length),
+    stat('Scans', c.total_scan_runs),
+    stat('Last Scan', relTime(c.last_scan_at)),
     stat('Attributed', attrText),
   ].join('');
   function stat(label, value) { return '<div class="stat"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>'; }
