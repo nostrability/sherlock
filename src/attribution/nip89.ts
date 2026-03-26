@@ -38,14 +38,26 @@ export async function fetchNip89Handlers(relays: string[]): Promise<Map<string, 
   return handlers;
 }
 
+const NAK_TIMEOUT_MS = 60_000; // 60s max per relay
+const MAX_STDERR_LEN = 4096;
+
 function fetchKind31990(nakPath: string, relay: string): Promise<NostrEvent[]> {
   return new Promise((resolve, reject) => {
     const events: NostrEvent[] = [];
     const args = ['req', '-k', '31990', '--limit', '500', relay];
+    let settled = false;
 
     const proc = spawn(nakPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill();
+        resolve(events); // return whatever we got before timeout
+      }
+    }, NAK_TIMEOUT_MS);
 
     const rl = createInterface({ input: proc.stdout });
 
@@ -63,9 +75,15 @@ function fetchKind31990(nakPath: string, relay: string): Promise<NostrEvent[]> {
     let stderr = '';
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
+      if (stderr.length > MAX_STDERR_LEN) {
+        stderr = stderr.slice(-MAX_STDERR_LEN);
+      }
     });
 
     proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       if (code === 0 || code === 3) {
         resolve(events);
       } else {
@@ -74,6 +92,9 @@ function fetchKind31990(nakPath: string, relay: string): Promise<NostrEvent[]> {
     });
 
     proc.on('error', (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       reject(new Error(`Failed to spawn nak: ${err.message}`));
     });
   });

@@ -13,9 +13,9 @@ function loadSchemas(): Record<string, unknown> {
   // Walk the dist/nips directory to find kind schemas directly
   // (the ESM bundle re-exports don't work with require())
   const schemataDir = require.resolve('@nostrability/schemata/package.json');
-  const pkgDir = schemataDir.replace('/package.json', '');
   const fs = require('fs');
   const path = require('path');
+  const pkgDir = path.dirname(schemataDir);
 
   schemas = {};
   const nipsDir = path.join(pkgDir, 'dist', 'nips');

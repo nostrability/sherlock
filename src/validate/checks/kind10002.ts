@@ -1,7 +1,7 @@
 import type { SemanticCheck } from '../semantic.js';
 import type { NostrEvent, SemanticViolation } from '../../types.js';
 
-const WSS_PATTERN = /^wss?:\/\/.+/;
+const WSS_PATTERN = /^wss:\/\/.+/;
 
 export const kind10002Checks: SemanticCheck[] = [
   {

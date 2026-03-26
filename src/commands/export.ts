@@ -11,7 +11,8 @@ import {
   getTimeRange,
   getDistinctRelays,
   getAttributionSummary,
-  getPubkeyDistribution,
+  getPubkeyCountByKind,
+  getPubkeyCountByApp,
   getTagFrequency,
   getSampleEvents,
   getAppTrend,
@@ -129,7 +130,8 @@ function buildFindings(): Findings {
   const timeRange = getTimeRange();
   const relays = getDistinctRelays();
   const attrSummary = getAttributionSummary();
-  const pubkeyDist = getPubkeyDistribution();
+  const pubkeyByKind = getPubkeyCountByKind();
+  const pubkeyByApp = getPubkeyCountByApp();
 
   // Attribution summary as object
   const attributionSummary: Record<string, number> = {};
@@ -137,10 +139,14 @@ function buildFindings(): Findings {
     attributionSummary[row.method] = row.count;
   }
 
-  // Index pubkey distribution by client_name+kind
-  const pubkeyIndex2 = new Map<string, number>();
-  for (const row of pubkeyDist) {
-    pubkeyIndex2.set(`${row.client_name}\0${row.kind}`, row.unique_pubkeys);
+  // Index pubkey counts at correct aggregation level
+  const kindPubkeyMap = new Map<number, number>();
+  for (const row of pubkeyByKind) {
+    kindPubkeyMap.set(row.kind, row.unique_pubkeys);
+  }
+  const appPubkeyMap = new Map<string, number>();
+  for (const row of pubkeyByApp) {
+    appPubkeyMap.set(row.client_name, row.unique_pubkeys);
   }
 
   // Aggregate totals
@@ -167,6 +173,7 @@ function buildFindings(): Findings {
           total: m.total, valid: m.valid, invalid: m.invalid,
           error_rate: Math.round(mRate * 10000) / 10000,
           status: computeStatus(m.total, m.invalid),
+          attribution_method: m.attribution_method ?? undefined,
         };
       }
     }
@@ -177,17 +184,8 @@ function buildFindings(): Findings {
 
     for (const v of violations) {
       if (v.kind === r.kind) {
-        // Separate semantic warnings from schema errors
-        const isSemantic = v.error_keyword && (
-          v.error_keyword.startsWith('kind0_') ||
-          v.error_keyword.startsWith('kind3_') ||
-          v.error_keyword.startsWith('kind10002_') ||
-          v.error_keyword.startsWith('kind9735_') ||
-          v.error_keyword === 'future_timestamp' ||
-          v.error_keyword === 'timestamp_too_old'
-        );
-
-        if (isSemantic) {
+        // Separate semantic warnings from schema errors using severity field
+        if (v.severity === 'warning') {
           const existing = semanticWarnings.find(w => w.check_name === v.error_keyword && w.message === v.error_message);
           if (existing) {
             existing.count += v.count;
@@ -209,11 +207,8 @@ function buildFindings(): Findings {
     kindErrors.sort((a, b) => b.count - a.count);
     semanticWarnings.sort((a, b) => b.count - a.count);
 
-    // Count unique pubkeys for this kind
-    let kindPubkeys = 0;
-    for (const [key, count] of pubkeyIndex2) {
-      if (key.endsWith(`\0${r.kind}`)) kindPubkeys += count;
-    }
+    // Unique pubkeys at the kind level (properly deduplicated)
+    const kindPubkeys = kindPubkeyMap.get(r.kind) ?? 0;
 
     findingsByKind[String(r.kind)] = {
       name: KIND_NAMES[r.kind] ?? `Kind ${r.kind}`,
@@ -234,6 +229,7 @@ function buildFindings(): Findings {
       findingsByApp[m.client_name] = {
         total_events: 0, total_valid: 0, total_invalid: 0, error_rate: 0,
         kinds_published: [], unique_pubkeys: 0, is_widespread: false,
+        attribution_method: m.attribution_method ?? undefined,
         violations: [],
       };
     }
@@ -242,10 +238,10 @@ function buildFindings(): Findings {
     app.total_valid += m.valid;
     app.total_invalid += m.invalid;
     app.kinds_published.push(m.kind);
-
-    // Add pubkey count for this app+kind
-    const pk = pubkeyIndex2.get(`${m.client_name}\0${m.kind}`) ?? 0;
-    app.unique_pubkeys += pk;
+  }
+  // Set unique pubkey counts at app aggregation level (properly deduplicated)
+  for (const [appName, app] of Object.entries(findingsByApp)) {
+    app.unique_pubkeys = appPubkeyMap.get(appName) ?? 0;
   }
   // Fill violations and compute error rates
   for (const v of violations) {
@@ -600,12 +596,16 @@ document.addEventListener('click', function(e) {
     navigator.clipboard.writeText(copyEl.dataset.copy);
     return;
   }
-  // Expand/collapse
+  // Expand/collapse via sibling traversal
   var row = e.target.closest('tr.expandable');
   if (!row) return;
   var key = row.dataset.kind || row.dataset.app;
   row.classList.toggle('open');
-  row.closest('tbody').querySelectorAll('tr.detail[data-parent="' + key + '"]').forEach(function(r) { r.classList.toggle('open'); });
+  var sib = row.nextElementSibling;
+  while (sib && sib.classList.contains('detail') && sib.dataset.parent === key) {
+    sib.classList.toggle('open');
+    sib = sib.nextElementSibling;
+  }
 });
 </script>
 </body>

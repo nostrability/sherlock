@@ -135,7 +135,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
           instancePath: issue.path,
           schemaPath: '',
           keyword: issue.check_name,
-          params: {},
+          params: { severity: issue.severity },
           message: issue.message,
         });
         if (validation.valid !== false && issue.severity === 'error') {

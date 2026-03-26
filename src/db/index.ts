@@ -143,16 +143,17 @@ export function storeEvent(
 
     if (result.changes === 0) return false; // duplicate
 
-    if (validation.errors.length > 0 && validation.schemaKey) {
+    if (validation.errors.length > 0) {
       const stmt = getInsertViolation();
       for (const err of validation.errors) {
+        const sev = (err.params as Record<string, unknown>)?.severity;
         stmt.run({
           event_id: event.id,
-          schema_key: validation.schemaKey,
+          schema_key: validation.schemaKey ?? `kind${event.kind}Semantic`,
           error_path: err.instancePath || null,
           error_message: err.message || 'unknown error',
           error_keyword: err.keyword || null,
-          severity: 'error',
+          severity: typeof sev === 'string' ? sev : 'error',
         });
       }
     }
@@ -243,22 +244,23 @@ export function getRecentViolations(limit: number = 20): Array<{ event_id: strin
 
 // --- Export queries ---
 
-export function getAppKindMatrix(): Array<{ client_name: string; kind: number; total: number; valid: number; invalid: number }> {
+export function getAppKindMatrix(): Array<{ client_name: string; kind: number; total: number; valid: number; invalid: number; attribution_method: string | null }> {
   return getDb().prepare(`
     SELECT COALESCE(client_name, '_unattributed') as client_name, kind,
       COUNT(*) as total,
       SUM(CASE WHEN valid = 1 THEN 1 ELSE 0 END) as valid,
-      SUM(CASE WHEN valid = 0 THEN 1 ELSE 0 END) as invalid
+      SUM(CASE WHEN valid = 0 THEN 1 ELSE 0 END) as invalid,
+      MAX(attribution_method) as attribution_method
     FROM events
     GROUP BY 1, 2
     ORDER BY total DESC
-  `).all() as Array<{ client_name: string; kind: number; total: number; valid: number; invalid: number }>;
+  `).all() as Array<{ client_name: string; kind: number; total: number; valid: number; invalid: number; attribution_method: string | null }>;
 }
 
 export function getViolationDetails(): Array<{
   client_name: string; kind: number; error_keyword: string | null;
   error_path: string | null; error_message: string; count: number;
-  sample_event_ids: string | null;
+  sample_event_ids: string | null; severity: string;
 }> {
   return getDb().prepare(`
     SELECT base.*, (
@@ -274,15 +276,16 @@ export function getViolationDetails(): Array<{
     ) as sample_event_ids
     FROM (
       SELECT COALESCE(e.client_name, '_unattributed') as client_name, e.kind,
-        v.error_keyword, v.error_path, v.error_message, COUNT(*) as count
+        v.error_keyword, v.error_path, v.error_message, v.severity,
+        COUNT(*) as count
       FROM violations v JOIN events e ON e.id = v.event_id
-      GROUP BY 1, 2, 3, 4, 5
+      GROUP BY 1, 2, 3, 4, 5, 6
     ) base
     ORDER BY count DESC
   `).all() as Array<{
     client_name: string; kind: number; error_keyword: string | null;
     error_path: string | null; error_message: string; count: number;
-    sample_event_ids: string | null;
+    sample_event_ids: string | null; severity: string;
   }>;
 }
 
@@ -373,7 +376,7 @@ export function getSampleEvents(kind: number, clientName?: string, errorKeyword?
     query += ' AND v.error_keyword = ?';
     params.push(errorKeyword);
   }
-  query += ' ORDER BY e.created_at DESC LIMIT ?';
+  query += ' GROUP BY e.id ORDER BY e.created_at DESC LIMIT ?';
   params.push(limit);
 
   return getDb().prepare(query).all(...params) as Array<{
@@ -411,14 +414,23 @@ export function getTagFrequency(kind: number, clientName?: string): Array<{ tag_
     .slice(0, 30);
 }
 
-export function getPubkeyDistribution(): Array<{ client_name: string; kind: number; unique_pubkeys: number }> {
+export function getPubkeyCountByKind(): Array<{ kind: number; unique_pubkeys: number }> {
   return getDb().prepare(`
-    SELECT COALESCE(client_name, '_unattributed') as client_name, kind,
+    SELECT kind, COUNT(DISTINCT pubkey) as unique_pubkeys
+    FROM events
+    GROUP BY kind
+    ORDER BY unique_pubkeys DESC
+  `).all() as Array<{ kind: number; unique_pubkeys: number }>;
+}
+
+export function getPubkeyCountByApp(): Array<{ client_name: string; unique_pubkeys: number }> {
+  return getDb().prepare(`
+    SELECT COALESCE(client_name, '_unattributed') as client_name,
            COUNT(DISTINCT pubkey) as unique_pubkeys
     FROM events
-    GROUP BY 1, 2
+    GROUP BY 1
     ORDER BY unique_pubkeys DESC
-  `).all() as Array<{ client_name: string; kind: number; unique_pubkeys: number }>;
+  `).all() as Array<{ client_name: string; unique_pubkeys: number }>;
 }
 
 export function getAttributionSummary(): Array<{ method: string; count: number }> {

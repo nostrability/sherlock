@@ -2,7 +2,7 @@ import type { SemanticCheck } from '../semantic.js';
 import type { NostrEvent, SemanticViolation } from '../../types.js';
 
 const URL_PATTERN = /^https?:\/\/.+/;
-const NIP05_PATTERN = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const NIP05_PATTERN = /^[a-zA-Z0-9._-]+@([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
 export const kind0Checks: SemanticCheck[] = [
   {
