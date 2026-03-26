@@ -202,8 +202,9 @@ export async function fetchEvents(opts: NakFetchOptions): Promise<number> {
 
   // Separate high-volume kinds into solo batches so they don't starve others
   const highVolume = new Set(HIGH_VOLUME_KINDS);
-  const soloKinds = opts.kinds.filter(k => highVolume.has(k));
-  const normalKinds = opts.kinds.filter(k => !highVolume.has(k));
+  const uniqueKinds = [...new Set(opts.kinds)];
+  const soloKinds = uniqueKinds.filter(k => highVolume.has(k));
+  const normalKinds = uniqueKinds.filter(k => !highVolume.has(k));
   const kindBatches = shuffle([
     ...soloKinds.map(k => [k]),
     ...chunk(normalKinds, DEFAULT_KIND_BATCH_SIZE),
