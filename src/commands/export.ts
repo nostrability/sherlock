@@ -11,7 +11,7 @@ import {
   getTimeRange,
   getDistinctRelays,
 } from '../db/index.js';
-import { KIND_NAMES, STATUS_THRESHOLDS, GITHUB_REPO, DEFAULT_KINDS } from '../config.js';
+import { KIND_NAMES, STATUS_THRESHOLDS, GITHUB_REPO, DEFAULT_KINDS, PUBLISH_RELAYS } from '../config.js';
 import { which } from '../util.js';
 
 // --- Types ---
@@ -545,12 +545,6 @@ async function publishToNostr(findings: Findings): Promise<void> {
     return;
   }
 
-  const publishRelays = [
-    'wss://relay.damus.io',
-    'wss://nos.lol',
-    'wss://relay.nostr.band',
-  ];
-
   const now = Math.floor(Date.now() / 1000);
   const dateTag = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
@@ -567,7 +561,7 @@ async function publishToNostr(findings: Findings): Promise<void> {
       '-c', kind1Content,
       '-t', 't=sherlock',
       '-t', 't=nostrability',
-      ...publishRelays,
+      ...PUBLISH_RELAYS,
     ];
     const result1 = execFileSync(nakPath, kind1Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:1 published:', result1.trim().slice(0, 80));
@@ -590,7 +584,7 @@ async function publishToNostr(findings: Findings): Promise<void> {
       '-t', `published_at=${String(now)}`,
       '-t', 't=sherlock',
       '-t', 't=nostrability',
-      ...publishRelays,
+      ...PUBLISH_RELAYS,
     ];
     const result2 = execFileSync(nakPath, kind30023Args, { encoding: 'utf-8', timeout: 30000, env: nakEnv });
     console.log('  kind:30023 published:', result2.trim().slice(0, 80));

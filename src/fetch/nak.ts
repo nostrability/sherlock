@@ -7,7 +7,24 @@ import {
   DEFAULT_BATCH_PAUSE_MS,
   DEFAULT_KIND_BATCH_SIZE,
 } from '../config.js';
+import type { ChildProcess } from 'node:child_process';
 import type { NostrEvent, RateLimitEvent } from '../types.js';
+
+// Track active child processes so we can kill them on SIGINT
+const activeProcs = new Set<ChildProcess>();
+let sigintHandlerInstalled = false;
+
+function installSigintHandler(): void {
+  if (sigintHandlerInstalled) return;
+  sigintHandlerInstalled = true;
+  process.on('SIGINT', () => {
+    for (const proc of activeProcs) {
+      proc.kill('SIGTERM');
+    }
+    activeProcs.clear();
+    process.exit(130); // standard SIGINT exit code
+  });
+}
 
 // Patterns nak prints to stderr when a relay sends CLOSED
 const RATE_LIMIT_PATTERNS = [
@@ -106,6 +123,7 @@ async function fetchBatchFromRelay(
     const proc = spawn(nakPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    activeProcs.add(proc);
 
     const rl = createInterface({ input: proc.stdout });
 
@@ -125,11 +143,16 @@ async function fetchBatchFromRelay(
     });
 
     let stderr = '';
+    const STDERR_MAX = 10240; // 10 KB cap
     proc.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      if (stderr.length < STDERR_MAX) {
+        stderr += chunk.toString();
+        if (stderr.length > STDERR_MAX) stderr = stderr.slice(0, STDERR_MAX);
+      }
     });
 
     proc.on('close', (code) => {
+      activeProcs.delete(proc);
       // Check for rate limiting in stderr regardless of exit code
       const rateLimits = detectRateLimits(stderr, relay);
       for (const rateLimit of rateLimits) {
@@ -163,6 +186,8 @@ export async function fetchEvents(opts: NakFetchOptions): Promise<number> {
   if (!nakPath) {
     throw new Error('nak is not installed. Install from: https://github.com/fiatjaf/nak');
   }
+
+  installSigintHandler();
 
   // Shuffle relay order so we don't always hit the same one first
   const relays = shuffle([...opts.relays]);

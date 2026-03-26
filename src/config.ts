@@ -4,6 +4,8 @@ export const DEFAULT_RELAYS = [
   'wss://relay.nostr.band',
 ];
 
+export const PUBLISH_RELAYS = DEFAULT_RELAYS;
+
 export const DEFAULT_KINDS = [
   0,      // NIP-01: Profile metadata
   3,      // NIP-02: Contact list
