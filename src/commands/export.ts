@@ -350,15 +350,12 @@ document.querySelectorAll('.tab').forEach(tab => {
     const d = bk[k];
     const topErr = d.top_errors[0];
     const rc = rateClass(d.error_rate);
-    const detailId = 'kind-detail-' + k;
-    html += '<tr data-kind="kind-' + k + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
+    html += '<tr><td><button type="button" class="expand-btn" aria-expanded="false">&#9656;</button>' + k + '</td><td>' + esc(d.name) + '</td><td>' + d.total.toLocaleString() + '</td><td>' + d.valid.toLocaleString() + '</td><td>' + d.invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.invalid, d.valid + d.invalid) + '</td><td class="truncate mono">' + (topErr ? esc(topErr.keyword + ' @ ' + (topErr.path||'/')) : '—') + '</td></tr>';
     // Detail rows: per-app breakdown
     const apps = Object.keys(d.by_app).sort((a,b) => d.by_app[b].total - d.by_app[a].total);
-    let kindAppIdx = 0;
     for (const app of apps) {
       const a = d.by_app[app];
-      html += '<tr class="detail" id="' + detailId + '-' + kindAppIdx + '" data-parent="kind-' + k + '"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
-      kindAppIdx++;
+      html += '<tr class="detail"><td></td><td>' + statusDot(a.status) + ' ' + esc(app) + '</td><td>' + a.total.toLocaleString() + '</td><td>' + a.valid.toLocaleString() + '</td><td>' + a.invalid.toLocaleString() + '</td><td class="rate ' + rateClass(a.error_rate) + '">' + pct(a.invalid, a.valid + a.invalid) + '</td><td></td></tr>';
     }
   }
   html += '</tbody></table>';
@@ -371,20 +368,14 @@ document.querySelectorAll('.tab').forEach(tab => {
   const apps = Object.keys(ba).sort((a,b) => ba[b].total_events - ba[a].total_events);
   if (!apps.length) { document.getElementById('panel-app').innerHTML = '<div class="empty">No data</div>'; return; }
   let html = '<table><thead><tr><th>App</th><th>Events</th><th>Valid</th><th>Invalid</th><th>Error Rate</th><th>Kinds</th></tr></thead><tbody>';
-  let appIdx = 0;
   for (const app of apps) {
     const d = ba[app];
     const rc = rateClass(d.error_rate);
-    const detailId = 'app-detail-' + appIdx;
-    const parentKey = 'app-' + appIdx;
-    html += '<tr data-app="' + parentKey + '"><td><button type="button" class="expand-btn" aria-expanded="false" aria-controls="' + detailId + '">&#9656;</button>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
+    html += '<tr><td><button type="button" class="expand-btn" aria-expanded="false">&#9656;</button>' + esc(app) + '</td><td>' + d.total_events.toLocaleString() + '</td><td>' + d.total_valid.toLocaleString() + '</td><td>' + d.total_invalid.toLocaleString() + '</td><td class="rate ' + rc + '">' + pct(d.total_invalid, d.total_valid + d.total_invalid) + '</td><td>' + d.kinds_published.map(k => '<span class="badge">' + k + '</span>').join('') + '</td></tr>';
     // Detail rows: violations
-    let violIdx = 0;
     for (const v of d.violations.slice(0, 10)) {
-      html += '<tr class="detail" id="' + detailId + '-' + violIdx + '" data-parent="' + parentKey + '"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" title="Click to copy ' + id + '" onclick="navigator.clipboard.writeText(\\'' + id + '\\')">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
-      violIdx++;
+      html += '<tr class="detail"><td></td><td colspan="2" class="mono">' + esc((v.keyword||'') + ' @ ' + (v.path||'/')) + '</td><td>' + v.count + '</td><td class="mono truncate">' + esc(v.message) + '</td><td class="mono">' + v.sample_event_ids.map(id => '<span class="copy" data-copy="' + id + '" title="Click to copy ' + id + '">' + shortId(id) + '</span>').join(' ') + '</td></tr>';
     }
-    appIdx++;
   }
   html += '</tbody></table>';
   document.getElementById('panel-app').innerHTML = html;
@@ -396,27 +387,32 @@ document.querySelectorAll('.tab').forEach(tab => {
   if (!errs.length) { document.getElementById('panel-errors').innerHTML = '<div class="empty">No errors</div>'; return; }
   let html = '<table><thead><tr><th>Error</th><th>Path</th><th>Message</th><th>Count</th><th>Kinds</th><th>Apps</th><th>Top Pubkeys</th></tr></thead><tbody>';
   for (const e of errs.slice(0, 50)) {
-    html += '<tr><td class="mono">' + esc(e.keyword||'—') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(k => '<span class="badge">' + k + '</span>').join('') + '</td><td>' + e.affected_apps.map(a => '<span class="badge">' + esc(a) + '</span>').join('') + '</td><td class="mono">' + e.top_pubkeys.map(p => '<span class="copy" title="' + p + '" onclick="navigator.clipboard.writeText(\\'' + p + '\\')">' + p.slice(0,8) + '…</span>').join(' ') + '</td></tr>';
+    html += '<tr><td class="mono">' + esc(e.keyword||'—') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(k => '<span class="badge">' + k + '</span>').join('') + '</td><td>' + e.affected_apps.map(a => '<span class="badge">' + esc(a) + '</span>').join('') + '</td><td class="mono">' + e.top_pubkeys.map(p => '<span class="copy" data-copy="' + p + '" title="' + p + '">' + p.slice(0,8) + '…</span>').join(' ') + '</td></tr>';
   }
   html += '</tbody></table>';
   document.getElementById('panel-errors').innerHTML = html;
 })();
 
-// Expand/collapse rows
+// Expand/collapse detail rows via sibling traversal
 document.addEventListener('click', function(e) {
-  const btn = e.target.closest('.expand-btn');
+  var btn = e.target.closest('.expand-btn');
   if (!btn) return;
-  const row = btn.closest('tr');
+  var row = btn.closest('tr');
   if (!row) return;
-  const key = row.dataset.kind || row.dataset.app;
-  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  var expanded = btn.getAttribute('aria-expanded') === 'true';
   btn.setAttribute('aria-expanded', String(!expanded));
   btn.innerHTML = expanded ? '&#9656;' : '&#9662;';
-  var tbody = row.closest('tbody');
-  var details = tbody.querySelectorAll('tr.detail');
-  for (var i = 0; i < details.length; i++) {
-    if (details[i].dataset.parent === key) details[i].classList.toggle('open');
+  var sibling = row.nextElementSibling;
+  while (sibling && sibling.classList.contains('detail')) {
+    sibling.classList.toggle('open');
+    sibling = sibling.nextElementSibling;
   }
+});
+
+// Copy to clipboard via delegated handler
+document.addEventListener('click', function(e) {
+  var el = e.target.closest('[data-copy]');
+  if (el) navigator.clipboard.writeText(el.dataset.copy);
 });
 </script>
 </body>
