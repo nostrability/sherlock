@@ -820,6 +820,19 @@ export async function exportCommand(opts: ExportCommandOptions): Promise<void> {
   writeFileSync(jsonPath, JSON.stringify(findings, null, 2) + '\n');
   console.log(`  Wrote ${jsonPath}`);
 
+  // Write summary (tiny subset for dashboard consumption)
+  const summaryPath = resolve(outdir, 'data', 'summary.json');
+  const summary = {
+    total_events: findings.scan_coverage.total_events,
+    total_valid: findings.scan_coverage.total_valid,
+    total_invalid: findings.scan_coverage.total_invalid,
+    kinds_scanned_count: findings.scan_coverage.kinds_scanned.length,
+    apps_identified: Object.keys(findings.by_app).length,
+    generated_at: findings.generated_at,
+  };
+  writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n');
+  console.log(`  Wrote ${summaryPath}`);
+
   // Write HTML
   const htmlPath = resolve(outdir, 'docs', 'index.html');
   mkdirSync(dirname(htmlPath), { recursive: true });
