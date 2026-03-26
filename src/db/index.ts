@@ -357,6 +357,13 @@ export function getScanRunHistory(limit: number = 20): ScanRun[] {
   `).all(limit) as ScanRun[];
 }
 
+export function getScanRunStats(): { total_runs: number; last_finished_at: number | null } {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) as total_runs, MAX(finished_at) as last_finished_at FROM scan_runs WHERE finished_at IS NOT NULL
+  `).get() as { total_runs: number; last_finished_at: number | null };
+  return row;
+}
+
 // --- Phase 3: Drill-down queries ---
 
 export function getSampleEvents(kind: number, clientName?: string, errorKeyword?: string, limit: number = 3): Array<{
