@@ -1,3 +1,5 @@
+import { getKindNipMap } from './validate/engine.js';
+
 export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
@@ -6,7 +8,7 @@ export const DEFAULT_RELAYS = [
 
 export const PUBLISH_RELAYS = DEFAULT_RELAYS;
 
-export const DEFAULT_KINDS = [
+export const PRIORITY_KINDS = [
   0,      // NIP-01: Profile metadata
   3,      // NIP-02: Contact list
   10002,  // NIP-65: Relay list metadata
@@ -38,7 +40,7 @@ export const DB_FILENAME = 'sherlock.db';
 
 export const GITHUB_REPO = 'https://github.com/nostrability/sherlock';
 
-export const KIND_NAMES: Record<number, string> = {
+export const PRIORITY_KIND_NAMES: Record<number, string> = {
   0:     'Profile Metadata (NIP-01)',
   3:     'Contact List (NIP-02)',
   10002: 'Relay List Metadata (NIP-65)',
@@ -56,6 +58,25 @@ export const KIND_NAMES: Record<number, string> = {
   9734:  'Zap Request (NIP-57)',
   9735:  'Zap Receipt (NIP-57)',
 };
+
+let _kindNamesCache: Record<number, string> | null = null;
+
+/**
+ * Get human-readable names for all known kinds.
+ * Priority kinds use hand-written names; others use "Kind N (NIP-XX)" from schemata.
+ */
+export function getKindNames(): Record<number, string> {
+  if (_kindNamesCache) return _kindNamesCache;
+  const names: Record<number, string> = { ...PRIORITY_KIND_NAMES };
+  const nipMap = getKindNipMap();
+  for (const [kind, nip] of nipMap) {
+    if (!(kind in names)) {
+      names[kind] = `Kind ${kind} (${nip})`;
+    }
+  }
+  _kindNamesCache = names;
+  return _kindNamesCache;
+}
 
 export const STATUS_THRESHOLDS = {
   MIN_EVENTS: 5,
