@@ -46,14 +46,24 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     ? opts.relays.split(',').map(r => r.trim()).filter(Boolean)
     : DEFAULT_RELAYS;
 
-  // Determine since timestamp
+  // Determine since timestamp + per-kind watermarks
   let since: number;
+  let perKindSince: Map<number, number> | undefined;
   if (opts.since) {
     const duration = parseDuration(opts.since);
     since = Math.floor(Date.now() / 1000) - duration;
   } else {
-    const hwm = getHighWaterMark();
-    since = hwm ?? Math.floor(Date.now() / 1000) - DEFAULT_SCAN_WINDOW_SECONDS;
+    // Use per-kind high water marks so frequent kinds don't starve rare ones
+    const fallback = Math.floor(Date.now() / 1000) - DEFAULT_SCAN_WINDOW_SECONDS;
+    perKindSince = new Map();
+    let minSince = Infinity;
+    for (const kind of kinds) {
+      const hwm = getHighWaterMark(kind);
+      const ts = hwm ?? fallback;
+      perKindSince.set(kind, ts);
+      if (ts < minSince) minSince = ts;
+    }
+    since = minSince === Infinity ? fallback : minSince;
   }
 
   // Apply time jitter: randomly look further back by up to 6 hours
@@ -77,6 +87,9 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
   console.log(`  Kinds: ${kinds.join(', ')}`);
   console.log(`  Relays: ${relays.join(', ')} (order randomized)`);
   console.log(`  Since: ${sinceDate} (jitter: -${Math.floor(jitterApplied / 60)}m)`);
+  if (perKindSince) {
+    console.log(`  Using per-kind watermarks (${perKindSince.size} kinds)`);
+  }
   console.log('');
 
   const progress = {
@@ -109,6 +122,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     kinds,
     relays,
     since,
+    perKindSince,
     onRelayStart: (relay, index, total) => {
       console.log(`  [relay ${index + 1}/${total}] ${relay}`);
     },
