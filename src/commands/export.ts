@@ -820,14 +820,11 @@ export async function exportCommand(opts: ExportCommandOptions): Promise<void> {
   writeFileSync(jsonPath, JSON.stringify(findings, null, 2) + '\n');
   console.log(`  Wrote ${jsonPath}`);
 
-  // Write summary (tiny subset for dashboard consumption)
+  // Write summary (tiny subset for nostrability.com dashboard consumption)
   const summaryPath = resolve(outdir, 'data', 'summary.json');
+  const validated = findings.scan_coverage.total_valid + findings.scan_coverage.total_invalid;
   const summary = {
-    total_events: findings.scan_coverage.total_events,
-    total_valid: findings.scan_coverage.total_valid,
-    total_invalid: findings.scan_coverage.total_invalid,
-    kinds_scanned_count: findings.scan_coverage.kinds_scanned.length,
-    apps_identified: Object.keys(findings.by_app).length,
+    schema_fail_pct: validated > 0 ? Math.round(findings.scan_coverage.total_invalid / validated * 1000) / 10 : 0,
     generated_at: findings.generated_at,
   };
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n');
