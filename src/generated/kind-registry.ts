@@ -44,8 +44,8 @@ export const KIND_REGISTRY: Record<number, KindMeta> = {
     name: "Encrypted Direct Message (NIP-04)",
     description: "Encrypted Direct Message (NIP-04)",
     requiredTags: ["p"],
-    hasConditionals: false,
-    category: "simple-contains",
+    hasConditionals: true,
+    category: "conditional",
   },
   5: {
     kind: 5,
@@ -288,7 +288,7 @@ export const KIND_REGISTRY: Record<number, KindMeta> = {
     description: "Spell — portable REQ filter (Grimoire/nak)",
     requiredTags: ["cmd"],
     hasConditionals: false,
-    category: "simple-contains",
+    category: "conditional",
   },
   818: {
     kind: 818,
