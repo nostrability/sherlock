@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
-import Ajv, { type ValidateFunction } from 'ajv';
+import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import type { NostrEvent, ValidationResult, SemanticViolation } from '../types.js';
 import { runAllSemanticChecks } from './semantic.js';
+import { BASE_ERROR_MESSAGES, KIND_ERROR_MESSAGES } from '../generated/error-messages.js';
 
 const require = createRequire(import.meta.url);
 
@@ -59,13 +60,6 @@ export function getAvailableKinds(): number[] {
   return [...kindNipMap!.keys()].sort((a, b) => a - b);
 }
 
-/**
- * Get mapping of kind number → NIP label (e.g., 7 → "NIP-25").
- */
-export function getKindNipMap(): Map<number, string> {
-  loadSchemas();
-  return new Map(kindNipMap!);
-}
 
 const ajv = new Ajv({ strict: false, allErrors: true });
 const cache = new Map<string, ValidateFunction | null>();
@@ -87,6 +81,32 @@ function stripNestedMetaFields(obj: unknown, isRoot = true): void {
   }
   for (const value of Object.values(record)) {
     stripNestedMetaFields(value, false);
+  }
+}
+
+/**
+ * Enrich AJV errors with human-friendly messages from generated error maps.
+ * Conservative: only enriches property-level errors where matching is unambiguous.
+ * Skips contains/minItems (multiple entries per kind, can't disambiguate which constraint failed).
+ */
+function enrichErrors(errors: ErrorObject[], kindNumber: number): void {
+  const kindMsgs = KIND_ERROR_MESSAGES[kindNumber];
+  for (const err of errors) {
+    // 1. Kind-specific property errors (e.g., schemaPath "#/allOf/1/properties/kind/const")
+    if (kindMsgs) {
+      const match = kindMsgs.find(km => {
+        if (km.keyword === 'contains' || km.keyword === 'minItems') return false;
+        // Convert bracket notation (allOf[1].properties.kind) to slash notation for schemaPath matching
+        const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1');
+        return err.schemaPath.includes(pathFragment);
+      });
+      if (match) { err.message = match.message; continue; }
+    }
+    // 2. Base field errors (e.g., instancePath "/kind" → "kind must equal constant value")
+    const field = err.instancePath.replace(/^\//, '');
+    if (field && BASE_ERROR_MESSAGES[field]) {
+      err.message = BASE_ERROR_MESSAGES[field];
+    }
   }
 }
 
@@ -117,9 +137,13 @@ export function validateEvent(event: NostrEvent): ValidationResult {
   }
 
   const valid = validate(event);
+  const errors = validate.errors ? [...validate.errors] : [];
+  if (errors.length > 0) {
+    enrichErrors(errors, event.kind);
+  }
   return {
     valid: !!valid,
-    errors: validate.errors ? [...validate.errors] : [],
+    errors,
     schemaKey: key,
   };
 }

@@ -1,4 +1,4 @@
-import { getKindNipMap } from './validate/engine.js';
+import { KIND_NAMES as GENERATED_KIND_NAMES } from './generated/kind-registry.js';
 
 export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
@@ -68,18 +68,11 @@ let _kindNamesCache: Record<number, string> | null = null;
 
 /**
  * Get human-readable names for all known kinds.
- * Priority kinds use hand-written names; others use "Kind N (NIP-XX)" from schemata.
+ * Generated names provide descriptive names for 166 kinds; priority names override for the 16 curated kinds.
  */
 export function getKindNames(): Record<number, string> {
   if (_kindNamesCache) return _kindNamesCache;
-  const names: Record<number, string> = { ...PRIORITY_KIND_NAMES };
-  const nipMap = getKindNipMap();
-  for (const [kind, nip] of nipMap) {
-    if (!(kind in names)) {
-      names[kind] = `Kind ${kind} (${nip})`;
-    }
-  }
-  _kindNamesCache = names;
+  _kindNamesCache = { ...GENERATED_KIND_NAMES, ...PRIORITY_KIND_NAMES };
   return _kindNamesCache;
 }
 
