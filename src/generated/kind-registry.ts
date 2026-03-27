@@ -10,7 +10,7 @@ export interface KindMeta {
   description?: string;
   requiredTags: string[];
   hasConditionals: boolean;
-  category: "bare" | "simple-contains" | "multi-contains" | "conditional";
+  category: "bare" | "simple-contains" | "multi-contains" | "conditional" | "failed";
 }
 
 export const KIND_REGISTRY: Record<number, KindMeta> = {
