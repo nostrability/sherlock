@@ -86,31 +86,23 @@ function stripNestedMetaFields(obj: unknown, isRoot = true): void {
 
 /**
  * Enrich AJV errors with human-friendly messages from generated error maps.
- * Conservative: only enriches property-level errors where matching is unambiguous.
- * Skips contains/minItems (multiple entries per kind, can't disambiguate which constraint failed).
- * Skips keywords that appear multiple times per kind (e.g., kind 1068 has 3 "items" entries).
+ *
+ * Only enriches path-like keywords (e.g., "allOf[1].properties.kind") where the
+ * generated keyword is specific enough for unambiguous schemaPath substring matching.
+ * Bare leaf keywords (pattern, items, additionalItems, etc.) are too short and match
+ * unrelated schema paths — skipped to avoid mislabeling errors.
  */
 function enrichErrors(errors: ErrorObject[], kindNumber: number): void {
   const kindMsgs = KIND_ERROR_MESSAGES[kindNumber];
 
-  // Pre-compute which keywords are ambiguous (appear more than once, excluding skipped ones)
-  let ambiguousKeywords: Set<string> | undefined;
-  if (kindMsgs) {
-    const counts = new Map<string, number>();
-    for (const km of kindMsgs) {
-      if (km.keyword === 'contains' || km.keyword === 'minItems') continue;
-      counts.set(km.keyword, (counts.get(km.keyword) ?? 0) + 1);
-    }
-    ambiguousKeywords = new Set([...counts.entries()].filter(([, c]) => c > 1).map(([k]) => k));
-  }
-
   for (const err of errors) {
-    // 1. Kind-specific property errors (e.g., schemaPath "#/allOf/1/properties/kind/const")
+    // 1. Kind-specific property errors — only match path-like keywords
+    // Path-like keywords contain "properties" (e.g., "allOf[1].properties.kind")
+    // and are specific enough for safe substring matching against AJV's schemaPath.
+    // Bare keywords (pattern, items, contains, minItems, etc.) are skipped.
     if (kindMsgs) {
       const match = kindMsgs.find(km => {
-        if (km.keyword === 'contains' || km.keyword === 'minItems') return false;
-        if (ambiguousKeywords?.has(km.keyword)) return false;
-        // Convert bracket notation (allOf[1].properties.kind) to slash notation for schemaPath matching
+        if (!km.keyword.includes('properties')) return false;
         const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1');
         return err.schemaPath.includes(pathFragment);
       });
