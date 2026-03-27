@@ -103,7 +103,9 @@ function enrichErrors(errors: ErrorObject[], kindNumber: number): void {
     if (kindMsgs) {
       const match = kindMsgs.find(km => {
         if (!km.keyword.includes('properties')) return false;
-        const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1');
+        // Normalize generated dotted notation to AJV's slash-separated schemaPath:
+        // "allOf[1].properties.kind" → "allOf/1/properties/kind"
+        const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1').replace(/\./g, '/');
         return err.schemaPath.includes(pathFragment);
       });
       if (match) { err.message = match.message; continue; }
