@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
-import Ajv, { type ValidateFunction } from 'ajv';
+import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import type { NostrEvent, ValidationResult, SemanticViolation } from '../types.js';
 import { runAllSemanticChecks } from './semantic.js';
+import { BASE_ERROR_MESSAGES, KIND_ERROR_MESSAGES } from '../generated/error-messages.js';
 
 const require = createRequire(import.meta.url);
 
@@ -59,13 +60,6 @@ export function getAvailableKinds(): number[] {
   return [...kindNipMap!.keys()].sort((a, b) => a - b);
 }
 
-/**
- * Get mapping of kind number → NIP label (e.g., 7 → "NIP-25").
- */
-export function getKindNipMap(): Map<number, string> {
-  loadSchemas();
-  return new Map(kindNipMap!);
-}
 
 const ajv = new Ajv({ strict: false, allErrors: true });
 const cache = new Map<string, ValidateFunction | null>();
@@ -87,6 +81,42 @@ function stripNestedMetaFields(obj: unknown, isRoot = true): void {
   }
   for (const value of Object.values(record)) {
     stripNestedMetaFields(value, false);
+  }
+}
+
+/**
+ * Enrich AJV errors with human-friendly messages from generated error maps.
+ *
+ * Only enriches path-like keywords (e.g., "allOf[1].properties.kind") where the
+ * generated keyword is specific enough for unambiguous schemaPath substring matching.
+ * Bare leaf keywords (pattern, items, additionalItems, etc.) are too short and match
+ * unrelated schema paths — skipped to avoid mislabeling errors.
+ */
+function enrichErrors(errors: ErrorObject[], kindNumber: number): void {
+  const kindMsgs = KIND_ERROR_MESSAGES[kindNumber];
+
+  for (const err of errors) {
+    // 1. Kind-specific property errors — only match path-like keywords
+    // Path-like keywords contain "properties" (e.g., "allOf[1].properties.kind")
+    // and are specific enough for safe substring matching against AJV's schemaPath.
+    // Bare keywords (pattern, items, contains, minItems, etc.) are skipped.
+    if (kindMsgs) {
+      const match = kindMsgs.find(km => {
+        if (!km.keyword.includes('properties')) return false;
+        // Normalize generated dotted notation to AJV's slash-separated schemaPath:
+        // "allOf[1].properties.kind" → "allOf/1/properties/kind"
+        const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1').replace(/\./g, '/');
+        return err.schemaPath.includes(pathFragment);
+      });
+      if (match) { err.message = match.message; continue; }
+    }
+    // 2. Base field errors (e.g., instancePath "/kind" → "kind must equal constant value")
+    // Skip "tags" — AJV's contains/minItems errors on /tags are more specific than the
+    // generic base message ("tags must be an array of valid tag tuples").
+    const field = err.instancePath.replace(/^\//, '');
+    if (field && field !== 'tags' && BASE_ERROR_MESSAGES[field]) {
+      err.message = BASE_ERROR_MESSAGES[field];
+    }
   }
 }
 
@@ -117,9 +147,13 @@ export function validateEvent(event: NostrEvent): ValidationResult {
   }
 
   const valid = validate(event);
+  const errors = validate.errors ? [...validate.errors] : [];
+  if (errors.length > 0) {
+    enrichErrors(errors, event.kind);
+  }
   return {
     valid: !!valid,
-    errors: validate.errors ? [...validate.errors] : [],
+    errors,
     schemaKey: key,
   };
 }

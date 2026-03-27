@@ -22,7 +22,8 @@
     "dev": "tsx src/index.ts",
     "scan": "node dist/index.js scan",
     "report": "node dist/index.js report",
-    "stats": "node dist/index.js stats"
+    "stats": "node dist/index.js stats",
+    "generate": "node ../schemata-codegen/dist/index.js --schemas ../schemata/dist --registry src/generated/kind-registry.ts --errors src/generated/error-messages.ts"
   },
   "dependencies": {
     "@nostrability/schemata": "^0.2.6",
