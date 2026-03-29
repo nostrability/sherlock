@@ -442,6 +442,48 @@ function pct(n, t) { return t > 0 ? (n/t*100).toFixed(1) + '%' : '0.0%'; }
 function rateClass(rate) { return rate === 0 ? 'rate-good' : rate <= 0.05 ? 'rate-warn' : 'rate-bad'; }
 function statusDot(s) { return '<span class="status status-' + s + '" title="' + ({y:'clean',a:'almost',n:'broken',u:'unknown'}[s]||s) + '"></span>'; }
 function shortId(id) { return id ? id.slice(0, 8) + '\\u2026' : ''; }
+function hexToNpub(hex) {
+  var CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  function bech32Polymod(values) {
+    var GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    var chk = 1;
+    for (var i = 0; i < values.length; i++) {
+      var b = chk >> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ values[i];
+      for (var j = 0; j < 5; j++) { if ((b >> j) & 1) chk ^= GEN[j]; }
+    }
+    return chk;
+  }
+  function hrpExpand(hrp) {
+    var ret = [];
+    for (var i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) >> 5);
+    ret.push(0);
+    for (var i = 0; i < hrp.length; i++) ret.push(hrp.charCodeAt(i) & 31);
+    return ret;
+  }
+  function createChecksum(hrp, data) {
+    var values = hrpExpand(hrp).concat(data).concat([0,0,0,0,0,0]);
+    var polymod = bech32Polymod(values) ^ 1;
+    var ret = [];
+    for (var i = 0; i < 6; i++) ret.push((polymod >> (5 * (5 - i))) & 31);
+    return ret;
+  }
+  // Convert 32 bytes (from hex) to 5-bit groups
+  var bytes = [];
+  for (var i = 0; i < 64; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+  var bits = 0, value = 0, data5 = [];
+  for (var i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) { bits -= 5; data5.push((value >> bits) & 31); }
+  }
+  if (bits > 0) data5.push((value << (5 - bits)) & 31);
+  var checksum = createChecksum('npub', data5);
+  var encoded = 'npub1';
+  for (var i = 0; i < data5.length; i++) encoded += CHARSET[data5[i]];
+  for (var i = 0; i < checksum.length; i++) encoded += CHARSET[checksum[i]];
+  return encoded;
+}
 function methodBadge(m) {
   if (!m) return '';
   var labels = {client_tag:'tag',nip89_pubkey:'nip89',fingerprint:'fp'};
@@ -579,7 +621,7 @@ document.querySelectorAll('.tab').forEach(function(tab) {
   var html = '<table><thead><tr><th>Error</th><th>Path</th><th>Message</th><th>Count</th><th>Kinds</th><th>Apps</th><th>Top Pubkeys</th></tr></thead><tbody>';
   for (var i = 0; i < Math.min(errs.length, 50); i++) {
     var e = errs[i];
-    html += '<tr><td class="mono">' + esc(e.keyword||'\\u2014') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td><td>' + e.affected_apps.map(function(a) { return '<span class="badge">' + esc(a) + '</span>'; }).join('') + '</td><td class="mono">' + e.top_pubkeys.map(function(p) { return '<span class="copy" data-copy="' + esc(p) + '" title="' + esc(p) + '">' + p.slice(0,8) + '\\u2026</span>'; }).join(' ') + '</td></tr>';
+    html += '<tr><td class="mono">' + esc(e.keyword||'\\u2014') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td><td>' + e.affected_apps.map(function(a) { return '<span class="badge">' + esc(a) + '</span>'; }).join('') + '</td><td class="mono">' + e.top_pubkeys.map(function(p) { var np = hexToNpub(p); return '<span class="copy" data-copy="' + esc(np) + '" title="' + esc(np) + '">' + np.slice(0,12) + '\\u2026</span>'; }).join(' ') + '</td></tr>';
   }
   html += '</tbody></table>';
   document.getElementById('panel-errors').innerHTML = html;
