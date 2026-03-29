@@ -177,7 +177,7 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
         // Only persist full raw JSON for events we'll drill into:
         // invalid events (debugging) or attributed events (training data).
         // Valid unattributed events still get a DB row, just with empty raw.
-        const keepRaw = !validation.valid || attribution !== null;
+        const keepRaw = validation.valid === false || attribution !== null;
         const rawJson = keepRaw ? JSON.stringify(event) : '';
 
         const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution, rawJson);

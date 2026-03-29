@@ -61,5 +61,5 @@ export function reattributeCommand(): void {
   console.log(`  Parsed:      ${formatNumber(parsed)}`);
   console.log(`  Parse errors: ${formatNumber(parseErrors)}`);
   console.log(`  Attributed:  ${formatNumber(attributed)}`);
-  console.log(`  Still unattributed: ${formatNumber(rows.length - attributed - parseErrors)}`);
+  console.log(`  Still unattributed: ${formatNumber(rows.length - attributed)}`);
 }
