@@ -443,6 +443,7 @@ function rateClass(rate) { return rate === 0 ? 'rate-good' : rate <= 0.05 ? 'rat
 function statusDot(s) { return '<span class="status status-' + s + '" title="' + ({y:'clean',a:'almost',n:'broken',u:'unknown'}[s]||s) + '"></span>'; }
 function shortId(id) { return id ? id.slice(0, 8) + '\\u2026' : ''; }
 function hexToNpub(hex) {
+  if (typeof hex !== 'string' || !/^[0-9a-fA-F]{64}$/.test(hex)) return hex || '';
   var CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   function bech32Polymod(values) {
     var GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
@@ -621,7 +622,7 @@ document.querySelectorAll('.tab').forEach(function(tab) {
   var html = '<table><thead><tr><th>Error</th><th>Path</th><th>Message</th><th>Count</th><th>Kinds</th><th>Apps</th><th>Top Pubkeys</th></tr></thead><tbody>';
   for (var i = 0; i < Math.min(errs.length, 50); i++) {
     var e = errs[i];
-    html += '<tr><td class="mono">' + esc(e.keyword||'\\u2014') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td><td>' + e.affected_apps.map(function(a) { return '<span class="badge">' + esc(a) + '</span>'; }).join('') + '</td><td class="mono">' + e.top_pubkeys.map(function(p) { var np = hexToNpub(p); return '<span class="copy" data-copy="' + esc(np) + '" title="' + esc(np) + '">' + np.slice(0,12) + '\\u2026</span>'; }).join(' ') + '</td></tr>';
+    html += '<tr><td class="mono">' + esc(e.keyword||'\\u2014') + '</td><td class="mono">' + esc(e.path||'/') + '</td><td class="truncate">' + esc(e.message) + '</td><td>' + e.total_count.toLocaleString() + '</td><td>' + e.affected_kinds.map(function(k) { return '<span class="badge">' + k + '</span>'; }).join('') + '</td><td>' + e.affected_apps.map(function(a) { return '<span class="badge">' + esc(a) + '</span>'; }).join('') + '</td><td class="mono">' + e.top_pubkeys.map(function(p) { var np = hexToNpub(p); return '<span class="copy" data-copy="' + esc(np) + '" title="' + esc(np) + '">' + esc(np.slice(0,12)) + '\\u2026</span>'; }).join(' ') + '</td></tr>';
   }
   html += '</tbody></table>';
   document.getElementById('panel-errors').innerHTML = html;
