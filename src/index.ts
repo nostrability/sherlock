@@ -5,6 +5,7 @@ import { scanCommand } from './commands/scan.js';
 import { reportCommand } from './commands/report.js';
 import { statsCommand } from './commands/stats.js';
 import { exportCommand } from './commands/export.js';
+import { reattributeCommand } from './commands/reattribute.js';
 import { closeDb } from './db/index.js';
 
 const program = new Command();
@@ -79,6 +80,20 @@ program
       await exportCommand(opts);
     } catch (err) {
       console.error('Export failed:', err);
+      process.exit(1);
+    } finally {
+      closeDb();
+    }
+  });
+
+program
+  .command('reattribute')
+  .description('Re-run Tier 1 attribution on unattributed events with stored raw JSON')
+  .action(() => {
+    try {
+      reattributeCommand();
+    } catch (err) {
+      console.error('Reattribute failed:', err);
       process.exit(1);
     } finally {
       closeDb();

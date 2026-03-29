@@ -121,6 +121,7 @@ function getInsertViolation() {
 /**
  * Insert an event and its violations in a single transaction.
  * Returns true if the event was new (inserted), false if duplicate.
+ * `raw` is the full JSON string — caller decides whether to persist it or pass ''.
  */
 export function storeEvent(
   event: NostrEvent,
@@ -129,8 +130,9 @@ export function storeEvent(
   sourceRelay?: string,
   scanRunId?: number,
   attribution?: Attribution | null,
+  raw?: string,
 ): boolean {
-  const raw = JSON.stringify(event);
+  const rawJson = raw ?? JSON.stringify(event);
   const validValue = validation.valid === null ? null : validation.valid ? 1 : 0;
 
   const txn = getDb().transaction(() => {
@@ -140,7 +142,7 @@ export function storeEvent(
       kind: event.kind,
       created_at: event.created_at,
       tags: JSON.stringify(event.tags),
-      raw,
+      raw: rawJson,
       client_name: attribution?.name ?? client?.name ?? null,
       source_relay: sourceRelay ?? null,
       valid: validValue,
