@@ -173,7 +173,14 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
         }
 
         const attribution = resolveAttribution(event, nip89Map, fingerprints);
-        const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution);
+
+        // Only persist full raw JSON for events we'll drill into:
+        // invalid events (debugging) or attributed events (training data).
+        // Valid unattributed events still get a DB row, just with empty raw.
+        const keepRaw = validation.valid === false || attribution !== null;
+        const rawJson = keepRaw ? JSON.stringify(event) : '';
+
+        const isNew = storeEvent(event, validation, null, relay, scanRunId, attribution, rawJson);
 
         if (!isNew) {
           progress.duplicates++;
