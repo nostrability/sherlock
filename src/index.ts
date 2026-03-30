@@ -24,6 +24,7 @@ program
   .option('--since <duration>', 'How far back to scan (e.g., 1h, 24h, 7d)')
   .option('--jitter <duration>', 'Max random offset added to --since for cohort diversity (default: 6h)')
   .option('--batch-limit <n>', 'Max events per nak batch request (default: 5000, 0 = unlimited)')
+  .option('--retain <days>', 'Delete events older than N days after scan (default: 90, 0 = keep all)')
   .action(async (opts) => {
     if (opts.kinds && opts.allSchemas) {
       console.error('Error: --kinds and --all-schemas are mutually exclusive.');

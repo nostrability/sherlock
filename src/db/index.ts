@@ -358,6 +358,26 @@ export function getDistinctRelays(): string[] {
   return rows.map(r => r.source_relay);
 }
 
+// --- Retention ---
+
+/**
+ * Delete events (and their violations) older than `retainDays`.
+ * Returns the number of events deleted.
+ */
+export function pruneOldEvents(retainDays: number): number {
+  const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
+  const db = getDb();
+
+  const txn = db.transaction(() => {
+    // Delete violations for old events first (FK constraint)
+    db.prepare('DELETE FROM violations WHERE event_id IN (SELECT id FROM events WHERE created_at < ?)').run(cutoff);
+    const result = db.prepare('DELETE FROM events WHERE created_at < ?').run(cutoff);
+    return result.changes;
+  });
+
+  return txn();
+}
+
 // --- Scan run tracking ---
 
 export function createScanRun(kinds: number[], relays: string[], sinceTs: number): number {

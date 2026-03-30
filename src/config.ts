@@ -41,6 +41,8 @@ export const DEFAULT_BATCH_LIMIT = 2500;          // max events per nak batch (0
 // Based on observed volumes: 1059 (48k), 1 (36k), 10002 (25k), 7 (21k)
 export const HIGH_VOLUME_KINDS = [1, 1059, 10002, 7];
 
+export const DEFAULT_RETAIN_DAYS = 90;
+
 export const DB_FILENAME = 'sherlock.db';
 
 export const GITHUB_REPO = 'https://github.com/nostrability/sherlock';

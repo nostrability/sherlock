@@ -1,10 +1,10 @@
-import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE, DEFAULT_RELAY_PAUSE_MS, DEFAULT_BATCH_LIMIT } from '../config.js';
+import { DEFAULT_RELAYS, PRIORITY_KINDS, DEFAULT_SCAN_WINDOW_SECONDS, DEFAULT_KIND_BATCH_SIZE, DEFAULT_RELAY_PAUSE_MS, DEFAULT_BATCH_LIMIT, DEFAULT_RETAIN_DAYS } from '../config.js';
 import { fetchEvents, checkNak } from '../fetch/nak.js';
 import { validateEvent, checkSchemaAvailability, runSemanticChecks, getAvailableKinds } from '../validate/engine.js';
 import { resolveAttribution } from '../attribution/resolve.js';
 import { fetchNip89Handlers } from '../attribution/nip89.js';
 import { loadFingerprints } from '../attribution/fingerprints.js';
-import { storeEvent, getHighWaterMark, getDb, createScanRun, finishScanRun } from '../db/index.js';
+import { storeEvent, getHighWaterMark, getDb, createScanRun, finishScanRun, pruneOldEvents } from '../db/index.js';
 import { parseDuration, formatNumber } from '../util.js';
 import type { RateLimitEvent } from '../types.js';
 
@@ -15,6 +15,7 @@ interface ScanCommandOptions {
   since?: string;
   jitter?: string;
   batchLimit?: string;
+  retain?: string;
 }
 
 /**
@@ -226,5 +227,15 @@ export async function scanCommand(opts: ScanCommandOptions): Promise<void> {
     }
     console.log('');
     console.log('  Consider: fewer kinds per batch, longer paginate interval, or fewer relays.');
+  }
+
+  // Retention: prune old events to keep DB bounded
+  const retainDays = opts.retain !== undefined ? Number(opts.retain) : DEFAULT_RETAIN_DAYS;
+  if (retainDays > 0) {
+    const pruned = pruneOldEvents(retainDays);
+    if (pruned > 0) {
+      console.log('');
+      console.log(`Retention: pruned ${formatNumber(pruned)} events older than ${retainDays}d`);
+    }
   }
 }
