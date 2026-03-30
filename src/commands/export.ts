@@ -15,7 +15,7 @@ import {
   getPubkeyCountByApp,
   getTagFrequency,
   getSampleEvents,
-  getAppTrend,
+  getBatchAppTrendsDaily,
   getAllAppTrends,
   getScanRunStats,
 } from '../db/index.js';
@@ -308,11 +308,11 @@ function buildFindings(): Findings {
   }
   errorPatterns.sort((a, b) => b.total_count - a.total_count);
 
-  // Build trends
+  // Build trends (single batch query instead of per-app loop)
   const trendsByApp: Record<string, AppTrend> = {};
-  const allApps = Object.keys(findingsByApp);
-  for (const appName of allApps) {
-    const rawTrend = getAppTrend(appName);
+  const batchTrends = getBatchAppTrendsDaily();
+  for (const appName of Object.keys(findingsByApp)) {
+    const rawTrend = batchTrends.get(appName) ?? [];
     const dataPoints: TrendDataPoint[] = rawTrend.map(t => ({
       date: t.period,
       error_rate: t.error_rate,

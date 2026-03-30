@@ -71,6 +71,22 @@ function runMigrations(db: Database.Database): void {
   // Create indexes on migrated columns (safe to run idempotently)
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_scan_run ON events(scan_run_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_violations_severity ON violations(severity)');
+
+  // Composite indexes for export queries
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_client_created ON events(client_name, created_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_violations_event_keyword ON violations(event_id, error_keyword)');
+
+  // One-time: strip raw JSON from valid unattributed events stored before conditional raw logic
+  const needsCleanup = db.prepare(
+    "SELECT COUNT(*) as cnt FROM events WHERE valid = 1 AND client_name IS NULL AND raw != ''"
+  ).get() as { cnt: number };
+  if (needsCleanup.cnt > 0) {
+    console.log(`  Cleaning raw JSON from ${needsCleanup.cnt} valid unattributed events...`);
+    db.exec("UPDATE events SET raw = '' WHERE valid = 1 AND client_name IS NULL AND raw != ''");
+    console.log('  Done. Running VACUUM to reclaim space...');
+    db.exec('VACUUM');
+    console.log('  VACUUM complete.');
+  }
 }
 
 let db: Database.Database | null = null;
@@ -272,33 +288,48 @@ export function getViolationDetails(): Array<{
   error_path: string | null; error_message: string; count: number;
   sample_event_ids: string | null; severity: string;
 }> {
-  return getDb().prepare(`
-    SELECT base.*, (
-      SELECT GROUP_CONCAT(sub_id) FROM (
-        SELECT e2.id as sub_id FROM violations v2
-        JOIN events e2 ON e2.id = v2.event_id
-        WHERE COALESCE(e2.client_name, '_unattributed') = base.client_name
-          AND e2.kind = base.kind
-          AND v2.error_keyword IS base.error_keyword
-          AND v2.error_path IS base.error_path
-          AND v2.error_message = base.error_message
-          AND v2.severity IS base.severity
-        LIMIT 3
-      )
-    ) as sample_event_ids
-    FROM (
-      SELECT COALESCE(e.client_name, '_unattributed') as client_name, e.kind,
-        v.error_keyword, v.error_path, v.error_message, v.severity,
-        COUNT(*) as count
-      FROM violations v JOIN events e ON e.id = v.event_id
-      GROUP BY 1, 2, 3, 4, 5, 6
-    ) base
+  // Step 1: Fast aggregation (single pass, no correlated subquery)
+  const base = getDb().prepare(`
+    SELECT COALESCE(e.client_name, '_unattributed') as client_name, e.kind,
+      v.error_keyword, v.error_path, v.error_message, v.severity,
+      COUNT(*) as count
+    FROM violations v JOIN events e ON e.id = v.event_id
+    GROUP BY 1, 2, 3, 4, 5, 6
     ORDER BY count DESC
   `).all() as Array<{
     client_name: string; kind: number; error_keyword: string | null;
     error_path: string | null; error_message: string; count: number;
     sample_event_ids: string | null; severity: string;
   }>;
+
+  // Step 2: Collect sample event IDs only for top patterns (avoids N correlated subqueries)
+  const sampleStmtNamed = getDb().prepare(`
+    SELECT e.id FROM violations v
+    JOIN events e ON e.id = v.event_id
+    WHERE e.client_name = ? AND e.kind = ?
+      AND v.error_keyword IS ? AND v.error_path IS ?
+      AND v.error_message = ?
+    LIMIT 3
+  `);
+  const sampleStmtNull = getDb().prepare(`
+    SELECT e.id FROM violations v
+    JOIN events e ON e.id = v.event_id
+    WHERE e.client_name IS NULL AND e.kind = ?
+      AND v.error_keyword IS ? AND v.error_path IS ?
+      AND v.error_message = ?
+    LIMIT 3
+  `);
+
+  const MAX_SAMPLE_ROWS = 200;
+  for (let i = 0; i < Math.min(base.length, MAX_SAMPLE_ROWS); i++) {
+    const row = base[i];
+    const samples = row.client_name === '_unattributed'
+      ? sampleStmtNull.all(row.kind, row.error_keyword, row.error_path, row.error_message)
+      : sampleStmtNamed.all(row.client_name, row.kind, row.error_keyword, row.error_path, row.error_message);
+    row.sample_event_ids = (samples as Array<{ id: string }>).map(s => s.id).join(',') || null;
+  }
+
+  return base;
 }
 
 export function getTopPubkeysForErrors(): Array<{
@@ -512,4 +543,32 @@ export function getAllAppTrends(lastNDays: number = 30): Array<{
     client_name: string; total: number; invalid: number; error_rate: number;
     first_seen: string; last_seen: string; data_points: number;
   }>;
+}
+
+/**
+ * Batch query: daily trend data for ALL apps in a single table scan.
+ * Returns a Map keyed by client_name (with '_unattributed' for NULL).
+ */
+export function getBatchAppTrendsDaily(): Map<string, Array<{ period: string; total: number; invalid: number; error_rate: number }>> {
+  const rows = getDb().prepare(`
+    SELECT COALESCE(e.client_name, '_unattributed') as client_name,
+           strftime('%Y-%m-%d', e.created_at, 'unixepoch') as period,
+           COUNT(*) as total,
+           SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) as invalid,
+           CASE WHEN SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END) > 0
+             THEN ROUND(CAST(SUM(CASE WHEN e.valid = 0 THEN 1 ELSE 0 END) AS REAL)
+               / SUM(CASE WHEN e.valid IS NOT NULL THEN 1 ELSE 0 END), 4)
+             ELSE 0
+           END as error_rate
+    FROM events e
+    GROUP BY 1, 2
+    ORDER BY 1, 2
+  `).all() as Array<{ client_name: string; period: string; total: number; invalid: number; error_rate: number }>;
+
+  const map = new Map<string, Array<{ period: string; total: number; invalid: number; error_rate: number }>>();
+  for (const row of rows) {
+    if (!map.has(row.client_name)) map.set(row.client_name, []);
+    map.get(row.client_name)!.push({ period: row.period, total: row.total, invalid: row.invalid, error_rate: row.error_rate });
+  }
+  return map;
 }
