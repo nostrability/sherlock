@@ -84,10 +84,12 @@ export interface Attribution {
 }
 
 export interface AppFingerprint {
+  _comment?: string;
   app_name: string;
   pubkey_prefix?: string[];
   tag_pattern?: { tag: string; value?: string }[];
   content_pattern?: string[];
+  tag_name_present?: string[];
 }
 
 export interface SemanticViolation {

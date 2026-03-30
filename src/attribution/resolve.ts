@@ -15,6 +15,13 @@ export function resolveAttribution(
   // Tier 1: client tag
   const clientTag = extractClientTag(event.tags);
   if (clientTag) {
+    // Check if any fingerprint disagrees with the client tag
+    for (const fp of fingerprints) {
+      if (matchFingerprint(event, fp) && fp.app_name.toLowerCase() !== clientTag.name.toLowerCase()) {
+        console.warn(`[fingerprint-disagree] client_tag="${clientTag.name}" fingerprint="${fp.app_name}" event=${event.id.slice(0, 8)}`);
+        break;
+      }
+    }
     return {
       name: clientTag.name,
       method: 'client_tag',
@@ -48,7 +55,7 @@ export function resolveAttribution(
   return null;
 }
 
-function matchFingerprint(event: NostrEvent, fp: AppFingerprint): boolean {
+export function matchFingerprint(event: NostrEvent, fp: AppFingerprint): boolean {
   // Check pubkey prefix match
   if (fp.pubkey_prefix?.length) {
     if (fp.pubkey_prefix.some(prefix => event.pubkey.startsWith(prefix))) {
@@ -66,6 +73,14 @@ function matchFingerprint(event: NostrEvent, fp: AppFingerprint): boolean {
       });
     });
     if (allMatch) return true;
+  }
+
+  // Check tag name presence (all names must be present)
+  if (fp.tag_name_present?.length) {
+    const allPresent = fp.tag_name_present.every(name =>
+      event.tags.some(tag => tag[0] === name)
+    );
+    if (allPresent) return true;
   }
 
   // Check content pattern match (any pattern matches)

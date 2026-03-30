@@ -1,41 +1,96 @@
 [
   {
+    "_comment": "Bridge traffic: any event with a proxy tag (ActivityPub, RSS, web protocol bridges — not just Mostr)",
+    "app_name": "Bridge traffic",
+    "tag_name_present": ["proxy"]
+  },
+  {
+    "_comment": "momostr: L=pink.momostr label namespace (relay recommendation bot)",
+    "app_name": "momostr",
+    "tag_pattern": [
+      { "tag": "L", "value": "pink.momostr" }
+    ]
+  },
+  {
+    "_comment": "lnp2pbot: y=lnp2pbot trade events (kind 38383)",
+    "app_name": "lnp2pbot",
+    "tag_pattern": [
+      { "tag": "y", "value": "lnp2pbot" }
+    ]
+  },
+  {
+    "_comment": "Ditto Trends Service: L=pub.ditto.trends label namespace (automated trend labeling, not the Ditto client itself)",
+    "app_name": "Ditto Trends",
+    "tag_pattern": [
+      { "tag": "L", "value": "pub.ditto.trends" }
+    ]
+  },
+  {
+    "_comment": "bitbot AI agent: L=ai.agent with l=bitbot labels",
+    "app_name": "bitbot",
+    "tag_pattern": [
+      { "tag": "L", "value": "ai.agent" },
+      { "tag": "l", "value": "bitbot" }
+    ]
+  },
+  {
+    "_comment": "Snort: NIP-89 client tag (3-element with 31990 address)",
+    "app_name": "Snort",
+    "tag_pattern": [
+      { "tag": "client", "value": "Snort" }
+    ]
+  },
+  {
+    "_comment": "Damus: simple 2-element client tag (user-configurable, default enabled)",
     "app_name": "Damus",
     "tag_pattern": [
-      { "tag": "client", "value": "damus" }
+      { "tag": "client", "value": "Damus" }
     ]
   },
   {
-    "app_name": "Primal",
-    "content_pattern": [
-      "primal.net"
-    ]
-  },
-  {
+    "_comment": "Amethyst: simple client tag without NIP-89 31990 reference",
     "app_name": "Amethyst",
     "tag_pattern": [
-      { "tag": "client", "value": "amethyst" }
+      { "tag": "client", "value": "Amethyst" }
     ]
   },
   {
-    "app_name": "Snort",
-    "content_pattern": [
-      "snort.social"
+    "_comment": "Primal Android (KMP): client tag on ALL events",
+    "app_name": "Primal Android",
+    "tag_pattern": [
+      { "tag": "client", "value": "Primal Android" }
     ]
   },
   {
-    "app_name": "Coracle",
-    "content_pattern": [
-      "coracle.social"
+    "_comment": "Primal Web: client tag ONLY on article drafts (kind 31023); note lowercase hyphenated value",
+    "app_name": "Primal Web",
+    "tag_pattern": [
+      { "tag": "client", "value": "primal-web" }
     ]
   },
   {
-    "app_name": "Nostrudel",
-    "content_pattern": [
-      "nostrudel.ninja"
+    "_comment": "Primal iOS (KMP target): client tag on ALL events via Kotlin Multiplatform",
+    "app_name": "Primal iOS",
+    "tag_pattern": [
+      { "tag": "client", "value": "Primal iOS" }
     ]
   },
   {
+    "_comment": "Primal iOS (native Swift): client tag ONLY on live comments (kind 1311); note hyphenated value",
+    "app_name": "Primal iOS Native",
+    "tag_pattern": [
+      { "tag": "client", "value": "Primal-iOS-App" }
+    ]
+  },
+  {
+    "_comment": "Primal Desktop (KMP target): client tag on ALL events",
+    "app_name": "Primal Desktop",
+    "tag_pattern": [
+      { "tag": "client", "value": "Primal Desktop" }
+    ]
+  },
+  {
+    "_comment": "Gossip: uses simple client tag",
     "app_name": "Gossip",
     "tag_pattern": [
       { "tag": "client", "value": "gossip" }

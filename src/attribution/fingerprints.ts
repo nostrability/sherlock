@@ -27,6 +27,7 @@ export function loadFingerprints(): AppFingerprint[] {
       if (e.pubkey_prefix !== undefined && !(Array.isArray(e.pubkey_prefix) && e.pubkey_prefix.every(v => typeof v === 'string'))) return false;
       if (e.tag_pattern !== undefined && !Array.isArray(e.tag_pattern)) return false;
       if (e.content_pattern !== undefined && !(Array.isArray(e.content_pattern) && e.content_pattern.every(v => typeof v === 'string'))) return false;
+      if (e.tag_name_present !== undefined && !(Array.isArray(e.tag_name_present) && e.tag_name_present.every(v => typeof v === 'string'))) return false;
       return true;
     });
     return cached;
