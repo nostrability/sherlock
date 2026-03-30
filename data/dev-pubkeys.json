@@ -1,0 +1,30 @@
+{
+  "_comment": "Known developer pubkeys per app. Informational only — not used for matching.",
+  "apps": {
+    "Damus": {
+      "dev": "jb55 (Will Casarin)",
+      "npub": "npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s",
+      "hex": "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245"
+    },
+    "Amethyst": {
+      "dev": "Vitor Pamplona",
+      "npub": "npub1gcxzte5zlkncx26j68ez60fzkvtkm9e0vrwdcvsjakxf9mu9qewqlfnj5z",
+      "hex": "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c"
+    },
+    "Snort": {
+      "dev": "Kieran (v0l)",
+      "npub": "npub1v0lxxxxutpvrelsksy8cdhgfux9l6a42hsj2qzquu2zk7vc9qnkszrqj49",
+      "hex": "63fe6318dc58583cfe16810f86dd09e18bfd76aabc24a0081ce2856f330504ed"
+    },
+    "Primal": {
+      "dev": "Miljan",
+      "npub": "npub16c0nh3dnadzqpm76uctf5hqhe2lny344zsmpm6feee9p5rdxaa9q586nvr",
+      "hex": "d61f3bc5b3eb4400efdae6169a5c17cabf3246b514361de939ce4a1a0da6ef4a"
+    },
+    "Gossip": {
+      "dev": "Mike Dilger",
+      "npub": "npub1acg6thl5psv62405rljzkj8spesceyfz2c32udakc2ak0dmvfeyse9p35c",
+      "hex": "ee11a5dff40c19a555f41fe42b48f00e618c91225622ae37b6c2bb67b76c4e49"
+    }
+  }
+}
