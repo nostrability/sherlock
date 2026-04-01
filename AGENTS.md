@@ -77,6 +77,44 @@ Schemata schemas require preprocessing before AJV compiles them (see `engine.ts:
 - Use `strict: false` (schemas use contains, if/then)
 - NEVER import the `@nostrability/schemata` ESM bundle — it is broken on Node 22+. Use `createRequire` and walk `dist/nips/*.json` directly. See `engine.ts:5-10` for the pattern.
 
+## Rules for filing GitHub issues
+
+IMPORTANT: Do not file issues, PRs, or comments outside of https://github.com/nostrability/sherlock/issues. All findings stay in this repository.
+
+CRITICAL: Every issue filed against a third-party app MUST be fact-checked before creation. Filing incorrect bug reports against other developers' apps damages credibility and wastes their time.
+
+Before filing any issue:
+
+1. **Verify the NIP**: Fetch the actual NIP specification (`https://raw.githubusercontent.com/nostr-protocol/nips/master/<N>.md`) and confirm which kind numbers it defines and what tag structure it requires. NEVER assume a kind number's purpose from memory — kind numbers are reused across NIPs (e.g., kind 1068 is NIP-88 Polls, NOT NIP-03 OpenTimestamps; kind 1018 is NIP-88 Poll Response, NOT only NIP-29 relay groups).
+
+2. **Verify the schemata schema**: Read the actual schema file at `dist/nips/<NIP>/kind-<N>/schema.json` (where `<NIP>` is the NIP number, e.g. `nip-88`, and `<N>` is the kind number, e.g. `1068`) and confirm it matches the NIP. Identify which NIP folder contains the schema, determine required tags (`contains`), and check per-item constraints (`if/then`), patterns, and maxItems.
+
+3. **Cite the specific failing constraint with exact error paths** (BLOCKING — do not file without this): The issue body MUST include:
+   - The **exact AJV error path** from the `violations` table (e.g., `/tags/1/0`, `/tags/0/2`).
+   - The **error keyword** (e.g., `const`, `contains`, `pattern`, `minItems`, `additionalItems`).
+   - The **error message** (e.g., "must be equal to constant", "must match pattern").
+   - A concrete example showing the **actual tag value** vs **expected value** from the schema.
+   - Query: `SELECT error_path, error_message, error_keyword, COUNT(*) FROM violations v JOIN events e ON v.event_id = e.id WHERE e.kind=<K> AND e.client_name='<app>' GROUP BY error_path, error_message, error_keyword ORDER BY COUNT(*) DESC`
+   - Apply the `failure-pinpointed` label to confirm this step is done.
+   - NEVER file a vague "suggests a partial schema compliance issue" or "fails validation" issue without these specifics. If the exact failure is unknown, investigate first — do not file the issue.
+
+4. **Verify the event data**: Read actual event content (including the `content` field, not just tags) to understand what the client is actually doing. A kind 16 event with article content in `content` is a legitimate NIP-18 generic repost, not a "misuse."
+
+5. **Cross-reference existing issues**: Check `gh issue list` to avoid duplicates. Search by app name AND kind number.
+
+6. **Distinguish client bugs from schema gaps**: If events follow a NIP but fail validation because the schema is wrong or incomplete, the issue belongs to schemata (missing/incorrect schema), not the client. Label with `schema-gap`. If the client genuinely violates the NIP, label with `verified-nip` + `verified-schema`.
+
+7. **Verify in app source code** (when possible): If the app is open-source, find the code that produces the violating events. Include the repository URL, specific file path, and line numbers in the issue body. Label with `verified-source`. This provides maximum value to the app developer — they can go straight to the fix.
+
+### Available labels
+
+- `false-positive` — validation failure caused by missing/incorrect schema, not a client bug. Close issue as "not planned".
+- `failure-pinpointed` — exact AJV error paths, keywords, and sample values documented in the issue body (not just a comment). This label is a REQUIREMENT for any issue reporting validation failures — do not file without it.
+- `verified-nip` — NIP specification verified against the actual NIP document
+- `verified-schema` — schemata schema verified as correct for this kind
+- `verified-source` — bug verified in app source code with file/line references
+- `schema-gap` — schemata is missing or has wrong schema for this kind
+
 ## CI
 
 GitHub Actions runs scan + export 3x/day. The SQLite DB is cached between runs.
