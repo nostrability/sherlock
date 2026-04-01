@@ -104,8 +104,6 @@ Before filing any issue:
 
 7. **Verify in app source code** (when possible): If the app is open-source, find the code that produces the violating events. Include the repository URL, specific file path, and line numbers in the issue body. Label with `verified-source`. This provides maximum value to the app developer — they can go straight to the fix.
 
-8. **File upstream** (when source-verified): After verifying a bug in source code (Rule 7), file an issue in the app's own repository so the developer is notified. Link the upstream issue from the sherlock issue for cross-reference. If the fix is straightforward, consider opening a PR instead. Apps may be hosted outside GitHub (e.g., Codeberg, GitLab, self-hosted) — check the repository URL from the client tag or NIP-89 metadata.
-
 ### Available labels
 
 - `false-positive` — validation failure caused by missing/incorrect schema, not a client bug. Close issue as "not planned".
