@@ -87,7 +87,7 @@ Before filing any issue:
 
 1. **Verify the NIP**: Fetch the actual NIP specification (`https://raw.githubusercontent.com/nostr-protocol/nips/master/<N>.md`) and confirm which kind numbers it defines and what tag structure it requires. NEVER assume a kind number's purpose from memory — kind numbers are reused across NIPs (e.g., kind 1068 is NIP-88 Polls, NOT NIP-03 OpenTimestamps; kind 1018 is NIP-88 Poll Response, NOT only NIP-29 relay groups).
 
-2. **Verify the schemata schema**: Read the actual schema file (`dist/nips/*/kind-<N>/schema.json`) and confirm it matches the NIP. Check: which NIP folder contains the schema? What tags does it require (`contains`)? What per-item constraints exist (`if/then`)? What patterns/maxItems apply?
+2. **Verify the schemata schema**: Read the actual schema file at `dist/nips/<NIP>/kind-<N>/schema.json` (where `<NIP>` is the NIP number, e.g. `nip-88`, and `<N>` is the kind number, e.g. `1068`) and confirm it matches the NIP. Identify which NIP folder contains the schema, determine required tags (`contains`), and check per-item constraints (`if/then`), patterns, and maxItems.
 
 3. **Cite the specific failing constraint with exact error paths** (BLOCKING — do not file without this): The issue body MUST include:
    - The **exact AJV error path** from the `violations` table (e.g., `/tags/1/0`, `/tags/0/2`).
