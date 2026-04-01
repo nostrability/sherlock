@@ -412,6 +412,11 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 .trend-worsening { color: var(--red); }
 .trend-stable { color: var(--muted); }
 .trend-insufficient { color: var(--muted); font-style: italic; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--fg); }
+th.sortable::after { content: " \\25b4"; font-size: 0.7em; opacity: 0.5; }
+th.sortable.desc::after { content: " \\25be"; opacity: 1; }
+th.sortable.asc::after { content: " \\25b4"; opacity: 1; }
 </style>
 </head>
 <body>
@@ -421,16 +426,16 @@ tr.detail td { padding-left: 32px; background: var(--hover); }
 <div class="coverage" id="coverage"></div>
 
 <div class="tabs">
-  <button class="tab active" data-tab="kind">By Kind</button>
+  <button class="tab" data-tab="kind">By Kind</button>
   <button class="tab" data-tab="app">By App</button>
   <button class="tab" data-tab="errors">Errors</button>
-  <button class="tab" data-tab="trends">Trends</button>
+  <button class="tab active" data-tab="trends">Trends</button>
 </div>
 
-<div class="panel active" id="panel-kind"></div>
+<div class="panel" id="panel-kind"></div>
 <div class="panel" id="panel-app"></div>
 <div class="panel" id="panel-errors"></div>
-<div class="panel" id="panel-trends"></div>
+<div class="panel active" id="panel-trends"></div>
 
 <script>
 var FINDINGS = ${data};
@@ -637,23 +642,38 @@ document.querySelectorAll('.tab').forEach(function(tab) {
 (function() {
   var trends = FINDINGS.trends ? FINDINGS.trends.by_app : {};
   var apps = Object.keys(trends).filter(function(a) { return trends[a].data_points.length > 0; });
-  apps.sort(function(a,b) {
-    var da = {improving:0,worsening:1,stable:2,insufficient_data:3};
-    var diff = (da[trends[a].direction]||3) - (da[trends[b].direction]||3);
-    if (diff !== 0) return diff;
-    return trends[b].data_points.length - trends[a].data_points.length;
-  });
   if (!apps.length) { document.getElementById('panel-trends').innerHTML = '<div class="empty">No trend data yet. Run multiple scans to see trends.</div>'; return; }
-  var html = '<table><thead><tr><th>App</th><th>Direction</th><th>Sparkline (last 30d)</th><th>Latest Error Rate</th><th>Data Points</th></tr></thead><tbody>';
-  for (var i = 0; i < apps.length; i++) {
-    var app = apps[i];
-    var t = trends[app];
-    var last = t.data_points[t.data_points.length - 1];
-    var latestRate = last ? last.error_rate : 0;
-    html += '<tr><td>' + esc(app) + '</td><td>' + trendArrow(t.direction) + ' ' + esc(t.direction) + '</td><td>' + sparkline(t.data_points) + '</td><td class="rate ' + rateClass(latestRate) + '">' + (latestRate*100).toFixed(1) + '%</td><td>' + t.data_points.length + '</td></tr>';
+
+  var sortAsc = true; // default: lowest error rate first
+
+  function getLatestRate(app) {
+    var dp = trends[app].data_points;
+    var last = dp[dp.length - 1];
+    return last ? last.error_rate : 0;
   }
-  html += '</tbody></table>';
-  document.getElementById('panel-trends').innerHTML = html;
+
+  function renderTrends() {
+    apps.sort(function(a, b) {
+      var ra = getLatestRate(a), rb = getLatestRate(b);
+      return sortAsc ? ra - rb : rb - ra;
+    });
+    var sortClass = sortAsc ? 'asc' : 'desc';
+    var html = '<table><thead><tr><th>App</th><th>Direction</th><th>Sparkline (last 30d)</th><th class="sortable ' + sortClass + '" id="sort-error-rate">Latest Error Rate</th><th>Data Points</th></tr></thead><tbody>';
+    for (var i = 0; i < apps.length; i++) {
+      var app = apps[i];
+      var t = trends[app];
+      var latestRate = getLatestRate(app);
+      html += '<tr><td>' + esc(app) + '</td><td>' + trendArrow(t.direction) + ' ' + esc(t.direction) + '</td><td>' + sparkline(t.data_points) + '</td><td class="rate ' + rateClass(latestRate) + '">' + (latestRate*100).toFixed(1) + '%</td><td>' + t.data_points.length + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('panel-trends').innerHTML = html;
+    document.getElementById('sort-error-rate').addEventListener('click', function() {
+      sortAsc = !sortAsc;
+      renderTrends();
+    });
+  }
+
+  renderTrends();
 })();
 
 // Expand/collapse rows + copy handler (delegated)
