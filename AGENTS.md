@@ -79,6 +79,8 @@ Schemata schemas require preprocessing before AJV compiles them (see `engine.ts:
 
 ## Rules for filing GitHub issues
 
+IMPORTANT: Do not file issues, PRs, or comments outside of https://github.com/nostrability/sherlock/issues. All findings stay in this repository.
+
 CRITICAL: Every issue filed against a third-party app MUST be fact-checked before creation. Filing incorrect bug reports against other developers' apps damages credibility and wastes their time.
 
 Before filing any issue:
