@@ -1,8 +1,8 @@
 import { createRequire } from 'node:module';
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
+import ajvErrors from 'ajv-errors';
 import type { NostrEvent, ValidationResult, SemanticViolation } from '../types.js';
 import { runAllSemanticChecks } from './semantic.js';
-import { BASE_ERROR_MESSAGES, KIND_ERROR_MESSAGES } from '../generated/error-messages.js';
 
 const require = createRequire(import.meta.url);
 
@@ -62,6 +62,7 @@ export function getAvailableKinds(): number[] {
 
 
 const ajv = new Ajv({ strict: false, allErrors: true });
+ajvErrors(ajv);
 const cache = new Map<string, ValidateFunction | null>();
 
 /**
@@ -85,37 +86,17 @@ function stripNestedMetaFields(obj: unknown, isRoot = true): void {
 }
 
 /**
- * Enrich AJV errors with human-friendly messages from generated error maps.
+ * Unwrap ajv-errors wrapped errors to preserve the original AJV keyword.
  *
- * Only enriches path-like keywords (e.g., "allOf[1].properties.kind") where the
- * generated keyword is specific enough for unambiguous schemaPath substring matching.
- * Bare leaf keywords (pattern, items, additionalItems, etc.) are too short and match
- * unrelated schema paths — skipped to avoid mislabeling errors.
+ * The ajv-errors plugin replaces error objects with keyword "errorMessage" and
+ * stashes the original errors in params.errors. We keep the human-friendly
+ * message but restore the original keyword so that database grouping/filtering
+ * by keyword continues to work.
  */
-function enrichErrors(errors: ErrorObject[], kindNumber: number): void {
-  const kindMsgs = KIND_ERROR_MESSAGES[kindNumber];
-
+function unwrapErrorKeywords(errors: ErrorObject[]): void {
   for (const err of errors) {
-    // 1. Kind-specific property errors — only match path-like keywords
-    // Path-like keywords contain "properties" (e.g., "allOf[1].properties.kind")
-    // and are specific enough for safe substring matching against AJV's schemaPath.
-    // Bare keywords (pattern, items, contains, minItems, etc.) are skipped.
-    if (kindMsgs) {
-      const match = kindMsgs.find(km => {
-        if (!km.keyword.includes('properties')) return false;
-        // Normalize generated dotted notation to AJV's slash-separated schemaPath:
-        // "allOf[1].properties.kind" → "allOf/1/properties/kind"
-        const pathFragment = km.keyword.replace(/\[(\d+)\]/g, '/$1').replace(/\./g, '/');
-        return err.schemaPath.includes(pathFragment);
-      });
-      if (match) { err.message = match.message; continue; }
-    }
-    // 2. Base field errors (e.g., instancePath "/kind" → "kind must equal constant value")
-    // Skip "tags" — AJV's contains/minItems errors on /tags are more specific than the
-    // generic base message ("tags must be an array of valid tag tuples").
-    const field = err.instancePath.replace(/^\//, '');
-    if (field && field !== 'tags' && BASE_ERROR_MESSAGES[field]) {
-      err.message = BASE_ERROR_MESSAGES[field];
+    if (err.keyword === 'errorMessage' && err.params?.errors?.length) {
+      err.keyword = err.params.errors[0].keyword;
     }
   }
 }
@@ -131,8 +112,6 @@ export function validateEvent(event: NostrEvent): ValidationResult {
       try {
         const cloned = structuredClone(schema);
         stripNestedMetaFields(cloned);
-        // Remove errorMessage fields (requires ajv-errors plugin we don't use)
-        stripErrorMessages(cloned);
         cache.set(key, ajv.compile(cloned as object));
       } catch (err) {
         console.error(`Warning: Failed to compile schema ${key}:`, err);
@@ -149,26 +128,13 @@ export function validateEvent(event: NostrEvent): ValidationResult {
   const valid = validate(event);
   const errors = validate.errors ? [...validate.errors] : [];
   if (errors.length > 0) {
-    enrichErrors(errors, event.kind);
+    unwrapErrorKeywords(errors);
   }
   return {
     valid: !!valid,
     errors,
     schemaKey: key,
   };
-}
-
-function stripErrorMessages(obj: unknown): void {
-  if (typeof obj !== 'object' || obj === null) return;
-  if (Array.isArray(obj)) {
-    for (const item of obj) stripErrorMessages(item);
-    return;
-  }
-  const record = obj as Record<string, unknown>;
-  delete record['errorMessage'];
-  for (const value of Object.values(record)) {
-    stripErrorMessages(value);
-  }
 }
 
 /**
