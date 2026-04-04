@@ -28,6 +28,7 @@
   "dependencies": {
     "@nostrability/schemata": "^0.2.6",
     "ajv": "^8.17.1",
+    "ajv-errors": "^3.0.0",
     "better-sqlite3": "^11.0.0",
     "commander": "^12.0.0"
   },
